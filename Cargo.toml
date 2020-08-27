@@ -1,0 +1,14 @@
+[package]
+name = "wolfnterm"
+version = "0.1.0"
+authors = ["yazgoo <yazgoo@gmail.com>"]
+description = "raycasting in the terminal"
+edition = "2018"
+license = "MIT"
+
+[dependencies]
+crossterm = "0.15"
+crossterm_input = "0.5"
+blockish = "0.0.8"
+rand = "0.7"
+image = "0.22"
