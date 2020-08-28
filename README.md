@@ -8,3 +8,8 @@ To run it, you'll have to [download the textures from Lode's website](https://lo
 (copyright by id Software), and unzip them in this directory.
 
 Then, just do a `cargo run --release`.
+
+# using it 
+
+Arrow keys to move / rotate.
+escape to quit.
