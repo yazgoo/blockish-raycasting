@@ -1,5 +1,5 @@
 [package]
-name = "wolfnterm"
+name = "blockish-raycasting"
 version = "0.1.0"
 authors = ["yazgoo <yazgoo@gmail.com>"]
 description = "raycasting in the terminal"
