@@ -7,6 +7,72 @@ use std::time::{Duration, Instant};
 use crossterm::terminal;
 use image::imageops::FilterType;
 
+fn render_floor_ceiling(textures: &Vec<Vec<u8>>, texWidth: u32, texHeight: u32, color_buff: &mut Vec<u32>, w: usize, h: usize, posX: f32, posY: f32, dirX:f32, dirY: f32, planeX: f32, planeY: f32) {
+    for y in 0..h
+    {
+      // rayDir for leftmost ray (x = 0) and rightmost ray (x = w)
+      let rayDirX0 = dirX - planeX;
+      let rayDirY0 = dirY - planeY;
+      let rayDirX1 = dirX + planeX;
+      let rayDirY1 = dirY + planeY;
+
+      let screenHeight = h as f32;
+      let screenWidth = w as f32;
+      // Current y position compared to the center of the screen (the horizon)
+      let p = y as f32 - screenHeight / 2.0;
+
+      // Vertical position of the camera.
+      let posZ = 0.5 * screenHeight;
+
+      // Horizontal distance from the camera to the floor for the current row.
+      // 0.5 is the z position exactly in the middle between floor and ceiling.
+      let rowDistance = posZ / p;
+
+      // calculate the real world step vector we have to add for each x (parallel to camera plane)
+      // adding step by step avoids multiplications with a weight in the inner loop
+      let floorStepX = rowDistance * (rayDirX1 - rayDirX0) / screenWidth;
+      let floorStepY = rowDistance * (rayDirY1 - rayDirY0) / screenWidth;
+
+      // real world coordinates of the leftmost column. This will be updated as we step to the right.
+      let mut floorX = posX + rowDistance * rayDirX0;
+      let mut floorY = posY + rowDistance * rayDirY0;
+
+      for x in 0..w
+      {
+        // the cell coord is simply got from the integer parts of floorX and floorY
+        let cellX = floorX as i32;
+        let cellY = floorY as i32;
+
+        // get the texture coordinate from the fractional part
+        let tx = ((texWidth as f32 * (floorX - cellX as f32)) as u32) & (texWidth as u32 - 1);
+        let ty = ((texHeight as f32 * (floorY - cellY as f32)) as u32) & (texHeight as u32 - 1);
+
+        floorX += floorStepX;
+        floorY += floorStepY;
+
+        // choose texture and draw the pixel
+        let floorTexture = 3;
+        let ceilingTexture = 6;
+
+        let texId = floorTexture as usize;
+        let texI = tx + ty * texWidth;
+        let texI = (texI * 3) as usize;
+        let color = (textures[texId][texI] as u32 |
+                        ((textures[texId][texI + 1] as u32) << 8) |
+                        ((textures[texId][texI + 2] as u32) << 16));
+        let color = (color >> 1) & 8355711; // make a bit darker
+        color_buff[y as usize * w + x as usize] = color as u32;
+
+        //ceiling (symmetrical, at screenHeight - y - 1 instead of y)
+        let texId = ceilingTexture as usize;
+        let color = (textures[texId][texI] as u32 |
+                        ((textures[texId][texI + 1] as u32) << 8) |
+                        ((textures[texId][texI + 2] as u32) << 16));
+        let color = (color >> 1) & 8355711; // make a bit darker
+        color_buff[(h - y - 1) as usize * w + x as usize] = color as u32;
+      }
+    }
+}
 
 fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32,color_buff: &mut Vec<u32>, depth_buff: &Vec<f32>, w: usize, h: usize, posX: f32, posY: f32, dirX: f32, dirY: f32, planeX: f32, planeY: f32) {
     let mut sortedSprites = sprites.into_iter()
@@ -61,6 +127,7 @@ fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_widt
         for stripe in drawStartX..drawEndX
         {
             let texX = (256 * (stripe - (-spriteWidth / 2 + spriteScreenX as i32)) * texture_width as i32 / spriteWidth) as i32 / 256;
+            
             //the conditions in the if are:
             //1) it's in front of camera plane so you don't see things behind you
             //2) it's on the screen (left)
@@ -88,17 +155,6 @@ fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_widt
 
 fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32, worldMap: &Vec<Vec<u32>>, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, w: usize, h: usize, posX: f32, posY: f32, dirX: f32, dirY: f32, planeX: f32, planeY: f32) {
 
-  for x in 0..w
-  {
-      for y in 0..h/2
-      {
-          color_buff[y * w + x] = 0x444444;
-      }
-      for y in h/2..h
-      {
-          color_buff[y * w + x] = 0x888888;
-      }
-  }
 
   for x in 0..w
   {
@@ -216,15 +272,16 @@ fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32
       //draw the pixels of the stripe as a vertical line
       let mut texX = (wallX * texture_width as f32) as i32;
       if side == 0 && rayDirX > 0.0 {
-          texX = 100 - texX - 1;
+          texX = texture_width as i32 - texX - 1;
       }
       if side == 1 && rayDirY < 0.0 {
-          texX = 100 - texX - 1;
+          texX = texture_width as i32 - texX - 1;
       }
       for y in drawStart..drawEnd {
           let texY = (y - drawStartNeg) * texture_height as i32 / (lineHeight as i32);
           let texI = texX as usize + texY as usize * texture_width as usize;
           let texI = (texI * 3) as usize;
+          let texId = texId - 1;
           color_buff[y as usize * w + x as usize] = (textures[texId][texI] as u32 |
               ((textures[texId][texI + 1] as u32) << 8) |
               ((textures[texId][texI + 2] as u32) << 16));
@@ -310,6 +367,7 @@ fn main() {
     let mut planeX = 0.0;
     let mut planeY = 0.66; //the 2d raycaster version of camera plane
 
+    /*
  let mut worldMap=
  vec![ 
       vec![1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
@@ -337,6 +395,34 @@ fn main() {
       vec![1,4,4,4,4,4,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
       vec![1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
  ];
+    */
+    let mut worldMap=
+        vec![
+        vec![8,8,8,8,8,8,8,8,8,8,8,4,4,6,4,4,6,4,6,4,4,4,6,4],
+        vec![8,0,0,0,0,0,0,0,0,0,8,4,0,0,0,0,0,0,0,0,0,0,0,4],
+        vec![8,0,3,3,0,0,0,0,0,8,8,4,0,0,0,0,0,0,0,0,0,0,0,6],
+        vec![8,0,0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,6],
+        vec![8,0,3,3,0,0,0,0,0,8,8,4,0,0,0,0,0,0,0,0,0,0,0,4],
+        vec![8,0,0,0,0,0,0,0,0,0,8,4,0,0,0,0,0,6,6,6,0,6,4,6],
+        vec![8,8,8,8,0,8,8,8,8,8,8,4,4,4,4,4,4,6,0,0,0,0,0,6],
+        vec![7,7,7,7,0,7,7,7,7,0,8,0,8,0,8,0,8,4,0,4,0,6,0,6],
+        vec![7,7,0,0,0,0,0,0,7,8,0,8,0,8,0,8,8,6,0,0,0,0,0,6],
+        vec![7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,8,6,0,0,0,0,0,4],
+        vec![7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,8,6,0,6,0,6,0,6],
+        vec![7,7,0,0,0,0,0,0,7,8,0,8,0,8,0,8,8,6,4,6,0,6,6,6],
+        vec![7,7,7,7,0,7,7,7,7,8,8,4,0,6,8,4,8,3,3,3,0,3,3,3],
+        vec![2,2,2,2,0,2,2,2,2,4,6,4,0,0,6,0,6,3,0,0,0,0,0,3],
+        vec![2,2,0,0,0,0,0,2,2,4,0,0,0,0,0,0,4,3,0,0,0,0,0,3],
+        vec![2,0,0,0,0,0,0,0,2,4,0,0,0,0,0,0,4,3,0,0,0,0,0,3],
+        vec![1,0,0,0,0,0,0,0,1,4,4,4,4,4,6,0,6,3,3,0,0,0,3,3],
+        vec![2,0,0,0,0,0,0,0,2,2,2,1,2,2,2,6,6,0,0,5,0,5,0,5],
+        vec![2,2,0,0,0,0,0,2,2,2,0,0,0,2,2,0,5,0,5,0,0,0,5,5],
+        vec![2,0,0,0,0,0,0,0,2,0,0,0,0,0,2,5,0,5,0,5,0,5,0,5],
+        vec![1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5],
+        vec![2,0,0,0,0,0,0,0,2,0,0,0,0,0,2,5,0,5,0,5,0,5,0,5],
+        vec![2,2,0,0,0,0,0,2,2,2,0,0,0,2,2,0,5,0,5,0,0,0,5,5],
+        vec![2,2,2,2,1,2,2,2,2,2,2,1,2,2,2,5,5,5,5,5,5,5,5,5]
+    ];
 
       let sprites =
           vec![
@@ -365,27 +451,29 @@ fn main() {
           vec![10.0, 15.1,8.0],
           vec![10.5, 15.8,8.0],
           ];
-    let img = image::open("pics/eagle.png").unwrap().resize(100, 100, FilterType::Nearest).to_rgb();
+    let texture_size = 64; // must be a power of two so that fractional part in floor ceiling computation work
+    let img = image::open("pics/eagle.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb();
     let texture_width = img.width();
     let texture_height = img.height();
     let raw = img.into_raw();
     let textures = vec![
-        image::open("pics/eagle.png").unwrap().resize(100, 100, FilterType::Nearest).to_rgb().into_raw(),
-        image::open("pics/redbrick.png").unwrap().resize(100, 100, FilterType::Nearest).to_rgb().into_raw(),
-        image::open("pics/purplestone.png").unwrap().resize(100, 100, FilterType::Nearest).to_rgb().into_raw(),
-        image::open("pics/greystone.png").unwrap().resize(100, 100, FilterType::Nearest).to_rgb().into_raw(),
-        image::open("pics/bluestone.png").unwrap().resize(100, 100, FilterType::Nearest).to_rgb().into_raw(),
-        image::open("pics/mossy.png").unwrap().resize(100, 100, FilterType::Nearest).to_rgb().into_raw(),
-        image::open("pics/wood.png").unwrap().resize(100, 100, FilterType::Nearest).to_rgb().into_raw(),
-        image::open("pics/colorstone.png").unwrap().resize(100, 100, FilterType::Nearest).to_rgb().into_raw(),
-        image::open("pics/barrel.png").unwrap().resize(100, 100, FilterType::Nearest).to_rgb().into_raw(),
-        image::open("pics/pillar.png").unwrap().resize(100, 100, FilterType::Nearest).to_rgb().into_raw(),
-        image::open("pics/greenlight.png").unwrap().resize(100, 100, FilterType::Nearest).to_rgb().into_raw(),
+        image::open("pics/eagle.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+        image::open("pics/redbrick.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+        image::open("pics/purplestone.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+        image::open("pics/greystone.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+        image::open("pics/bluestone.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+        image::open("pics/mossy.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+        image::open("pics/wood.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+        image::open("pics/colorstone.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+        image::open("pics/barrel.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+        image::open("pics/pillar.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+        image::open("pics/greenlight.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
     ];
 
     loop {
         let start_time = Instant::now();
         print!("\x1b[{};0f", 0);
+        render_floor_ceiling(&textures, texture_width, texture_height, &mut color_buff, window_width, window_height, posX, posY, dirX, dirY, planeX, planeY);
         render_walls(&textures, texture_width, texture_height, &worldMap, &mut color_buff, &mut depth_buff, window_width, window_height, posX, posY, dirX, dirY, planeX, planeY);
         render_sprites(&sprites, &textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, posX, posY, dirX, dirY, planeX, planeY);
         engine.render(&|x, y| {
