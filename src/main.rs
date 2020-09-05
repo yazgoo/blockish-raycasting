@@ -18,10 +18,23 @@ use std::io::{Read, Write};
 use std::env;
 use std::fmt::Debug;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct Position {
     x: f32,
     y: f32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+enum ServerMessage {
+    MessagePositions(HashMap<SocketAddr, Position>),
+    MessageWorldMap(Vec<Vec<u8>>),
+    MessageSprites(Vec<Vec<f32>>),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+enum ClientMessage {
+    MessagePosition(Position),
+    MessageHello,
 }
 
 fn render_floor_ceiling(textures: &Vec<Vec<u8>>, texWidth: u32, texHeight: u32, color_buff: &mut Vec<u32>, w: usize, h: usize, posX: f32, posY: f32, dirX:f32, dirY: f32, planeX: f32, planeY: f32) {
@@ -170,7 +183,7 @@ fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_widt
     }
 }
 
-fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32, worldMap: &Vec<Vec<u32>>, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, w: usize, h: usize, posX: f32, posY: f32, dirX: f32, dirY: f32, planeX: f32, planeY: f32) {
+fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32, worldMap: &Vec<Vec<u8>>, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, w: usize, h: usize, posX: f32, posY: f32, dirX: f32, dirY: f32, planeX: f32, planeY: f32) {
 
 
   for x in 0..w
@@ -307,7 +320,7 @@ fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32
   }
 }
 
-fn move_player(option_event: Option<crossterm_input::InputEvent>,worldMap: &Vec<Vec<u32>>, posX: &mut f32, posY: &mut f32, dirX: &mut f32, dirY: &mut f32, planeX: &mut f32, planeY: &mut f32) {
+fn move_player(option_event: Option<crossterm_input::InputEvent>,worldMap: &Vec<Vec<u8>>, posX: &mut f32, posY: &mut f32, dirX: &mut f32, dirY: &mut f32, planeX: &mut f32, planeY: &mut f32) {
     let rotSpeed : f32 = 0.1;
     let moveSpeed: f32 = 0.1;
         match option_event {
@@ -351,6 +364,60 @@ fn move_player(option_event: Option<crossterm_input::InputEvent>,worldMap: &Vec<
 }
 
 fn server(address: String) {
+        let mut world_map : Vec<Vec<u8>> =
+            vec![
+            vec![8,8,8,8,8,8,8,8,8,8,8,4,4,6,4,4,6,4,6,4,4,4,6,4],
+            vec![8,0,0,0,0,0,0,0,0,0,8,4,0,0,0,0,0,0,0,0,0,0,0,4],
+            vec![8,0,3,3,0,0,0,0,0,8,8,4,0,0,0,0,0,0,0,0,0,0,0,6],
+            vec![8,0,0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,6],
+            vec![8,0,3,3,0,0,0,0,0,8,8,4,0,0,0,0,0,0,0,0,0,0,0,4],
+            vec![8,0,0,0,0,0,0,0,0,0,8,4,0,0,0,0,0,6,6,6,0,6,4,6],
+            vec![8,8,8,8,0,8,8,8,8,8,8,4,4,4,4,4,4,6,0,0,0,0,0,6],
+            vec![7,7,7,7,0,7,7,7,7,0,8,0,8,0,8,0,8,4,0,4,0,6,0,6],
+            vec![7,7,0,0,0,0,0,0,7,8,0,8,0,8,0,8,8,6,0,0,0,0,0,6],
+            vec![7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,8,6,0,0,0,0,0,4],
+            vec![7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,8,6,0,6,0,6,0,6],
+            vec![7,7,0,0,0,0,0,0,7,8,0,8,0,8,0,8,8,6,4,6,0,6,6,6],
+            vec![7,7,7,7,0,7,7,7,7,8,8,4,0,6,8,4,8,3,3,3,0,3,3,3],
+            vec![2,2,2,2,0,2,2,2,2,4,6,4,0,0,6,0,6,3,0,0,0,0,0,3],
+            vec![2,2,0,0,0,0,0,2,2,4,0,0,0,0,0,0,4,3,0,0,0,0,0,3],
+            vec![2,0,0,0,0,0,0,0,2,4,0,0,0,0,0,0,4,3,0,0,0,0,0,3],
+            vec![1,0,0,0,0,0,0,0,1,4,4,4,4,4,6,0,6,3,3,0,0,0,3,3],
+            vec![2,0,0,0,0,0,0,0,2,2,2,1,2,2,2,6,6,0,0,5,0,5,0,5],
+            vec![2,2,0,0,0,0,0,2,2,2,0,0,0,2,2,0,5,0,5,0,0,0,5,5],
+            vec![2,0,0,0,0,0,0,0,2,0,0,0,0,0,2,5,0,5,0,5,0,5,0,5],
+            vec![1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5],
+            vec![2,0,0,0,0,0,0,0,2,0,0,0,0,0,2,5,0,5,0,5,0,5,0,5],
+            vec![2,2,0,0,0,0,0,2,2,2,0,0,0,2,2,0,5,0,5,0,0,0,5,5],
+            vec![2,2,2,2,1,2,2,2,2,2,2,1,2,2,2,5,5,5,5,5,5,5,5,5]
+                ];
+            let mut sprites = 
+                vec![
+                vec![20.5, 11.5, 10.0], //green light in front of playerstart
+                //green lights in every room
+                vec![18.5,4.5, 10.0],
+                vec![10.0,4.5, 10.0],
+                vec![10.0,12.5,10.0],
+                vec![3.5, 6.5, 10.0],
+                vec![3.5, 20.5,10.0],
+                vec![3.5, 14.5,10.0],
+                vec![14.5,20.5,10.0],
+
+                //row of pillars in front of wall: fisheye test
+                vec![18.5, 10.5, 9.0],
+                vec![18.5, 11.5, 9.0],
+                vec![18.5, 12.5, 9.0],
+
+                //some barrels around the map
+                vec![21.5, 1.5, 8.0],
+                vec![15.5, 1.5, 8.0],
+                vec![16.0, 1.8, 8.0],
+                vec![16.2, 1.2, 8.0],
+                vec![3.5,  2.5, 8.0],
+                vec![9.5, 15.5, 8.0],
+                vec![10.0, 15.1,8.0],
+                vec![10.5, 15.8,8.0],
+                ];
     // Creates the socket
     let mut socket = Socket::bind(address).unwrap();
     let packet_sender = socket.get_packet_sender();
@@ -370,14 +437,33 @@ fn server(address: String) {
                     SocketEvent::Packet(packet) => {
                         let endpoint: SocketAddr = packet.addr();
                         let received_data: &[u8] = packet.payload();
-                        let pos = bincode::deserialize::<Position>(received_data).unwrap();
-                        positions.insert(endpoint, pos);
-                        println!("positions {:?}", positions);
-                        let posSer = bincode::serialize(&positions).unwrap();
-                        packet_sender.send(Packet::unreliable(endpoint, posSer)).unwrap();
+                        let message = bincode::deserialize::<ClientMessage>(received_data).unwrap();
+                        match message {
+                            ClientMessage::MessagePosition(pos) => {
+                                positions.insert(endpoint, pos);
+                                println!("positions {:?}", positions);
+                                let mut positionsClone = HashMap::new();
+                                for (key, value) in &positions {
+                                    if key != &endpoint {
+                                        positionsClone.insert(key.clone(), value.clone());
+                                    }
+                                }
+                                let positionsMessage = ServerMessage::MessagePositions(positionsClone);
+                                let posSer = bincode::serialize(&positionsMessage).unwrap();
+                                packet_sender.send(Packet::reliable_unordered(endpoint, posSer)).unwrap();
+                            },
+                            ClientMessage::MessageHello => {
+                                let map_message = ServerMessage::MessageWorldMap(world_map.clone());
+                                let message_ser = bincode::serialize(&map_message).unwrap();
+                                packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
+                                let sprites_message = ServerMessage::MessageSprites(sprites.clone());
+                                let message_ser = bincode::serialize(&sprites_message).unwrap();
+                                packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
+                            }
+                        }
                     },
-                   SocketEvent::Connect(connect_event) => { /* a client connected */ },
-                    SocketEvent::Timeout(timeout_event) => { /* a client timed out */},
+                   SocketEvent::Connect(_) => { /* a client connected */ },
+                    SocketEvent::Timeout(_) => { /* a client timed out */},
                 }
             }
             Err(e) => {
@@ -427,59 +513,33 @@ fn main() {
 
         let mut worldMap=
             vec![
-            vec![8,8,8,8,8,8,8,8,8,8,8,4,4,6,4,4,6,4,6,4,4,4,6,4],
-            vec![8,0,0,0,0,0,0,0,0,0,8,4,0,0,0,0,0,0,0,0,0,0,0,4],
-            vec![8,0,3,3,0,0,0,0,0,8,8,4,0,0,0,0,0,0,0,0,0,0,0,6],
-            vec![8,0,0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,6],
-            vec![8,0,3,3,0,0,0,0,0,8,8,4,0,0,0,0,0,0,0,0,0,0,0,4],
-            vec![8,0,0,0,0,0,0,0,0,0,8,4,0,0,0,0,0,6,6,6,0,6,4,6],
-            vec![8,8,8,8,0,8,8,8,8,8,8,4,4,4,4,4,4,6,0,0,0,0,0,6],
-            vec![7,7,7,7,0,7,7,7,7,0,8,0,8,0,8,0,8,4,0,4,0,6,0,6],
-            vec![7,7,0,0,0,0,0,0,7,8,0,8,0,8,0,8,8,6,0,0,0,0,0,6],
-            vec![7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,8,6,0,0,0,0,0,4],
-            vec![7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,8,6,0,6,0,6,0,6],
-            vec![7,7,0,0,0,0,0,0,7,8,0,8,0,8,0,8,8,6,4,6,0,6,6,6],
-            vec![7,7,7,7,0,7,7,7,7,8,8,4,0,6,8,4,8,3,3,3,0,3,3,3],
-            vec![2,2,2,2,0,2,2,2,2,4,6,4,0,0,6,0,6,3,0,0,0,0,0,3],
-            vec![2,2,0,0,0,0,0,2,2,4,0,0,0,0,0,0,4,3,0,0,0,0,0,3],
-            vec![2,0,0,0,0,0,0,0,2,4,0,0,0,0,0,0,4,3,0,0,0,0,0,3],
-            vec![1,0,0,0,0,0,0,0,1,4,4,4,4,4,6,0,6,3,3,0,0,0,3,3],
-            vec![2,0,0,0,0,0,0,0,2,2,2,1,2,2,2,6,6,0,0,5,0,5,0,5],
-            vec![2,2,0,0,0,0,0,2,2,2,0,0,0,2,2,0,5,0,5,0,0,0,5,5],
-            vec![2,0,0,0,0,0,0,0,2,0,0,0,0,0,2,5,0,5,0,5,0,5,0,5],
-            vec![1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5],
-            vec![2,0,0,0,0,0,0,0,2,0,0,0,0,0,2,5,0,5,0,5,0,5,0,5],
-            vec![2,2,0,0,0,0,0,2,2,2,0,0,0,2,2,0,5,0,5,0,0,0,5,5],
-            vec![2,2,2,2,1,2,2,2,2,2,2,1,2,2,2,5,5,5,5,5,5,5,5,5]
+            vec![2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+            vec![2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2]
                 ];
 
-            let sprites =
-                vec![
-                vec![20.5, 11.5, 10.0], //green light in front of playerstart
-                //green lights in every room
-                vec![18.5,4.5, 10.0],
-                vec![10.0,4.5, 10.0],
-                vec![10.0,12.5,10.0],
-                vec![3.5, 6.5, 10.0],
-                vec![3.5, 20.5,10.0],
-                vec![3.5, 14.5,10.0],
-                vec![14.5,20.5,10.0],
-
-                //row of pillars in front of wall: fisheye test
-                vec![18.5, 10.5, 9.0],
-                vec![18.5, 11.5, 9.0],
-                vec![18.5, 12.5, 9.0],
-
-                //some barrels around the map
-                vec![21.5, 1.5, 8.0],
-                vec![15.5, 1.5, 8.0],
-                vec![16.0, 1.8, 8.0],
-                vec![16.2, 1.2, 8.0],
-                vec![3.5,  2.5, 8.0],
-                vec![9.5, 15.5, 8.0],
-                vec![10.0, 15.1,8.0],
-                vec![10.5, 15.8,8.0],
-                ];
+            let mut sprites = vec![];
 
                 let texture_size = 64; // must be a power of two so that fractional part in floor ceiling computation work
                 let img = image::open("pics/eagle.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb();
@@ -508,31 +568,52 @@ fn main() {
                 let server = args[1].parse().unwrap();
 
                 let mut i = 0;
+                let mut startup = true;
                 let mut characters : Vec<Vec<f32>> = vec![];
                 loop {
-                    let result = event_receiver.try_recv();
-                    match result {
-                        Ok(socket_event) => {
-                            match socket_event {
-                                SocketEvent::Packet(packet) => {
-                                    let received_data: &[u8] = packet.payload();
-                                    let positions = bincode::deserialize::<HashMap<SocketAddr, Position>>(received_data).unwrap();
-                                    characters = vec![];
-                                    for position in positions {
-                                        characters.push(vec![position.1.x, position.1.y, 11.0]);
-                                    }
-                                },
-                                SocketEvent::Connect(connect_event) => { /* a client connected */ },
-                                SocketEvent::Timeout(timeout_event) => { /* a client timed out */},
+                    let mut stuff_to_read = true;
+                    while stuff_to_read {
+                        let result = event_receiver.try_recv();
+                        match result {
+                            Ok(socket_event) => {
+                                match socket_event {
+                                    SocketEvent::Packet(packet) => {
+                                        let received_data: &[u8] = packet.payload();
+                                        let message = bincode::deserialize::<ServerMessage>(received_data).unwrap();
+                                        match message {
+                                            ServerMessage::MessageSprites(s) => {
+                                                sprites = s;
+                                            },
+                                            ServerMessage::MessageWorldMap(map) => {
+                                                worldMap = map;
+                                            },
+                                            ServerMessage::MessagePositions(positions) => {
+                                                characters = vec![];
+                                                for position in positions {
+                                                    characters.push(vec![position.1.x, position.1.y, 11.0]);
+                                                }
+                                            },
+                                        }
+                                    },
+                                    SocketEvent::Connect(connect_event) => { /* a client connected */ },
+                                    SocketEvent::Timeout(timeout_event) => { /* a client timed out */},
+                                }
                             }
-                        }
-                        Err(_) => {
+                            Err(_) => {
+                                stuff_to_read = false;
+                            }
                         }
                     }
                     if i > 30 {
-                        let pos = Position { x : posX, y : posY };
+                        if startup {
+                            let message = ClientMessage::MessageHello;
+                            let messageSer = bincode::serialize(&message).unwrap();
+                            packet_sender.send(Packet::reliable_unordered(server, messageSer)).unwrap();
+                            startup = false;
+                        }
+                        let pos = ClientMessage::MessagePosition(Position { x : posX, y : posY });
                         let posSer = bincode::serialize(&pos).unwrap();
-                        packet_sender.send(Packet::unreliable(server, posSer)).unwrap();
+                        packet_sender.send(Packet::reliable_unordered(server, posSer)).unwrap();
                         i = 0;
                     }
                     i += 1;
