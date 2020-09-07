@@ -4,11 +4,14 @@ extern crate crossterm_input;
 extern crate laminar;
 extern crate bincode;
 extern crate reqwest;
+extern crate crossbeam_channel;
+use rand::prelude::*;
 #[macro_use] extern crate scan_fmt;
 
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use laminar::{Socket, SocketEvent, Packet};
+use crossbeam_channel::Sender;
 
 use std::thread;
 use std::time::{Duration, Instant};
@@ -364,6 +367,40 @@ fn move_player(option_event: Option<crossterm_input::InputEvent>,world_map: &Vec
         res
 }
 
+fn new_coin_position(world_map: &Vec<Vec<u8>>) -> (f32, f32) {
+    let mut rng = rand::thread_rng();
+    loop {
+        let y = rng.gen_range(0, 23);
+        let x = rng.gen_range(0, 23);
+        if world_map[x][y] == 0 {
+            let coin_position = (x as f32 + 0.5, y as f32 + 0.5);
+            println!("coin position{:?}", coin_position);
+            return coin_position;
+        }
+    }
+}
+
+fn check_gold_coins(world_map: &Vec<Vec<u8>>, packet_sender: &Sender<Packet>, gold_coins: &mut Vec<(f32, f32)>, positions : &HashMap<SocketAddr, Position>) {
+    let mut gold_coins_changed = false;
+    for (_, value) in positions {
+        for i in 0..gold_coins.len() {
+            if (value.x as i32, value.y as i32) == (gold_coins[i].0 as i32, gold_coins[i].1 as i32) {
+                let (new_x, new_y) = new_coin_position(world_map);
+                gold_coins[i].0 = new_x;
+                gold_coins[i].1 = new_y;
+                gold_coins_changed = true;
+            }
+        }
+    }
+    if gold_coins_changed {
+        for (key, _) in positions {
+            let message = ServerMessage::MessageGoldCoins(gold_coins.clone());
+            let message_ser = bincode::serialize(&message).unwrap();
+            packet_sender.send(Packet::reliable_unordered(key.clone(), message_ser)).unwrap();
+        }
+    }
+
+}
 fn server(address: String) {
     let world_map : Vec<Vec<u8>> =
         vec![
@@ -421,7 +458,7 @@ fn server(address: String) {
             ];
 
     let mut gold_coins = vec![
-        (20.5, 12.5)
+        new_coin_position(&world_map)
     ];
     let textures_url = "https://srv-file10.gofile.io/download/GrF7ZN/wolfenstein_textures.zip";
     // Creates the socket
@@ -463,25 +500,12 @@ fn server(address: String) {
                                     last_seen.remove(&key);
                                 }
                                 let mut positions_clone = HashMap::new();
-                                let mut gold_coins_changed = false;
                                 for (key, value) in &positions {
                                     if key != &endpoint {
                                         positions_clone.insert(key.clone(), value.clone());
                                     }
-                                    for i in 0..gold_coins.len() {
-                                        if (value.x as i32, value.y as i32) == (gold_coins[i].0 as i32, gold_coins[i].1 as i32) {
-                                            gold_coins[i].1 -= 1.0;
-                                            gold_coins_changed = true;
-                                        }
-                                    }
                                 }
-                                if gold_coins_changed {
-                                    for (key, _) in &positions {
-                                        let textures_message = ServerMessage::MessageGoldCoins(gold_coins.clone());
-                                        let message_ser = bincode::serialize(&textures_message).unwrap();
-                                        packet_sender.send(Packet::reliable_unordered(key.clone(), message_ser)).unwrap();
-                                    }
-                                }
+                                check_gold_coins(&world_map, &packet_sender, &mut gold_coins, &positions);
                                 let positions_message = ServerMessage::MessagePositions(positions_clone);
                                 let pos_ser = bincode::serialize(&positions_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, pos_ser)).unwrap();

@@ -13,3 +13,7 @@ Then, just do a `cargo run --release`.
 
 Arrow keys to move / rotate.
 escape to quit.
+
+# artwork
+
+gold coin by morgan3d https://opengameart.org/content/spinning-gold-coin CC-BY 3.0
