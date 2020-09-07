@@ -35,6 +35,7 @@ enum ServerMessage {
     MessageWorldMap(Vec<Vec<u8>>),
     MessageSprites(Vec<Vec<f32>>),
     MessageTexturesZip(String),
+    MessageGoldCoins(Vec<(f32, f32)>),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -110,7 +111,8 @@ fn render_floor_ceiling(textures: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32
     }
 }
 
-fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32,color_buff: &mut Vec<u32>, depth_buff: &Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32) {
+fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32,color_buff: &mut Vec<u32>, depth_buff: &Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32, rgba: bool) {
+    let bytesPerPixel = if rgba { 4 } else { 3 };
     let mut sorted_sprites = sprites.into_iter()
         .map( |x| (x, ((pos_x - x[0]) * (pos_x - x[0]) + (pos_y - x[1]) * (pos_y - x[1]))))
         .collect::<Vec<(&Vec<f32>, f32)>>();
@@ -175,12 +177,12 @@ fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_widt
                     let d = (y) * 256 - h as i32 * 128 + sprite_height * 128; //256 and 128 factors to avoid floats
                     let tex_y = ((d * texture_height as i32) / sprite_height) / 256;
                     let tex_i = tex_x as usize + tex_y as usize * texture_width as usize;
-                    let tex_i = (tex_i * 3) as usize;
+                    let tex_i = (tex_i * bytesPerPixel) as usize;
                     let tex_id = sprite[2] as usize;
                     let color = textures[tex_id][tex_i] as u32 |
                         ((textures[tex_id][tex_i + 1] as u32) << 8) |
                         ((textures[tex_id][tex_i + 2] as u32) << 16);
-                    if (color & 0x00_fFFFFF) != 0 {
+                    if (!rgba && (color & 0x00_fFFFFF) != 0) || (rgba && textures[tex_id][tex_i + 2] != 0xff) {
                         color_buff[y as usize * w + stripe as usize] = color as u32
                     }
                 }
@@ -417,6 +419,10 @@ fn server(address: String) {
             vec![10.0, 15.1,8.0],
             vec![10.5, 15.8,8.0],
             ];
+
+    let mut gold_coins = vec![
+        (20.5, 12.5)
+    ];
     let textures_url = "https://srv-file10.gofile.io/download/GrF7ZN/wolfenstein_textures.zip";
     // Creates the socket
     let mut socket = Socket::bind(address).unwrap();
@@ -457,9 +463,23 @@ fn server(address: String) {
                                     last_seen.remove(&key);
                                 }
                                 let mut positions_clone = HashMap::new();
+                                let mut gold_coins_changed = false;
                                 for (key, value) in &positions {
                                     if key != &endpoint {
                                         positions_clone.insert(key.clone(), value.clone());
+                                    }
+                                    for i in 0..gold_coins.len() {
+                                        if (value.x as i32, value.y as i32) == (gold_coins[i].0 as i32, gold_coins[i].1 as i32) {
+                                            gold_coins[i].1 -= 1.0;
+                                            gold_coins_changed = true;
+                                        }
+                                    }
+                                }
+                                if gold_coins_changed {
+                                    for (key, _) in &positions {
+                                        let textures_message = ServerMessage::MessageGoldCoins(gold_coins.clone());
+                                        let message_ser = bincode::serialize(&textures_message).unwrap();
+                                        packet_sender.send(Packet::reliable_unordered(key.clone(), message_ser)).unwrap();
                                     }
                                 }
                                 let positions_message = ServerMessage::MessagePositions(positions_clone);
@@ -474,6 +494,9 @@ fn server(address: String) {
                                 let message_ser = bincode::serialize(&sprites_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
                                 let textures_message = ServerMessage::MessageTexturesZip(String::from(textures_url));
+                                let message_ser = bincode::serialize(&textures_message).unwrap();
+                                packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
+                                let textures_message = ServerMessage::MessageGoldCoins(gold_coins.clone());
                                 let message_ser = bincode::serialize(&textures_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
                             }
@@ -511,11 +534,7 @@ fn load_textures(url: String) -> Vec<Vec<u8>> {
     v.into_iter().map(|x| x.1).collect()
 }
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-
-    if args.len() == 3 {
-
+fn client(server_address: String, client_address: String) {
         let window_width = 640;
         let window_height = 320;
         let time_per_frame = 1000/ 60;
@@ -582,34 +601,38 @@ fn main() {
                 let texture_size = 64; // must be a power of two so that fractional part in floor ceiling computation work
                 let texture_width = 64;
                 let texture_height = 64;
-                /*
-                */
-                let mut textures = vec![
-                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                ];
+                let default_texture = image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw();
+                let mut textures = vec![default_texture; 11];
                 let character_textures = vec![
                     image::open("free-pics/character.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
                 ];
-                let mut socket = Socket::bind(args[2].clone()).unwrap();
+                let coin_width = 32;
+                let coin_height = 32;
+                let goldcoin_textures = vec![
+                    image::open("goldCoin/goldCoin1.png").unwrap().to_rgba().into_raw(),
+                    image::open("goldCoin/goldCoin2.png").unwrap().to_rgba().into_raw(),
+                    image::open("goldCoin/goldCoin3.png").unwrap().to_rgba().into_raw(),
+                    image::open("goldCoin/goldCoin4.png").unwrap().to_rgba().into_raw(),
+                    image::open("goldCoin/goldCoin5.png").unwrap().to_rgba().into_raw(),
+                    image::open("goldCoin/goldCoin6.png").unwrap().to_rgba().into_raw(),
+                    image::open("goldCoin/goldCoin7.png").unwrap().to_rgba().into_raw(),
+                    image::open("goldCoin/goldCoin8.png").unwrap().to_rgba().into_raw(),
+                    image::open("goldCoin/goldCoin9.png").unwrap().to_rgba().into_raw(),
+                ];
+
+                let mut gold_coins = vec![
+                ];
+                let mut socket = Socket::bind(client_address.clone()).unwrap();
                 let packet_sender = socket.get_packet_sender();
                 let event_receiver = socket.get_event_receiver();
                 let _thread = thread::spawn(move || socket.start_polling());
-                let server = args[1].parse().unwrap();
+                let server = server_address.parse().unwrap();
 
-                let mut i = 0;
                 let mut startup = true;
                 let mut move_speed: f32 = 0.0;
                 let mut character_positions = vec![];
+
+                let mut previous = Instant::now();
                 loop {
                     let mut stuff_to_read = true;
                     while stuff_to_read {
@@ -629,6 +652,12 @@ fn main() {
                                             },
                                             ServerMessage::MessageWorldMap(map) => {
                                                 world_map = map;
+                                            },
+                                            ServerMessage::MessageGoldCoins(gcs) => {
+                                                gold_coins = vec![];
+                                                for gc in gcs {
+                                                    gold_coins.push(vec![gc.0, gc.1, 0.0]);
+                                                }
                                             },
                                             ServerMessage::MessagePositions(positions) => {
                                                 character_positions = vec![];
@@ -661,7 +690,8 @@ fn main() {
                     for position in &character_positions {
                         characters.push(vec![position.x, position.y, 0.0]);
                     }
-                    if i > 15 {
+                    let now = Instant::now();
+                    if (now - previous) > Duration::from_millis(500) {
                         if startup {
                             let message = ClientMessage::MessageHello;
                             let message_ser = bincode::serialize(&message).unwrap();
@@ -671,16 +701,22 @@ fn main() {
                         let pos = ClientMessage::MessagePosition(Position { x : pos_x, y : pos_y, dir_x: dir_x, dir_y: dir_y, speed: move_speed });
                         let pos_ser = bincode::serialize(&pos).unwrap();
                         packet_sender.send(Packet::reliable_unordered(server, pos_ser)).unwrap();
-                        i = 0;
+                        previous = now;
+                        for i in 0..gold_coins.len() {
+                            gold_coins[i][2] += 1.0;
+                            if gold_coins[i][2] > 8.0 {
+                                gold_coins[i][2] = 0.0;
+                            }
+                        }
                     }
-                    i += 1;
 
                     let start_time = Instant::now();
-                    print!("\x1b[{};0f", 0);
                     render_floor_ceiling(&textures, texture_width, texture_height, &mut color_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y);
                     render_walls(&textures, texture_width, texture_height, &world_map, &mut color_buff, &mut depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y);
-                    render_sprites(&sprites, &textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y);
-                    render_sprites(&characters, &character_textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y);
+                    render_sprites(&sprites, &textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, false);
+                    render_sprites(&characters, &character_textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, false);
+                    render_sprites(&gold_coins, &goldcoin_textures, coin_width, coin_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true);
+                    print!("\x1b[{};0f", 0);
                     engine.render(&|x, y| {
                         let start = (y * window_height as u32 / term_height * window_width as u32 + (x * window_width as u32 / term_width))
                             as usize;
@@ -696,6 +732,13 @@ fn main() {
                     let option_event = reader.next();
                     move_speed = move_player(option_event, &world_map, &mut pos_x, &mut pos_y, &mut dir_x, &mut dir_y, &mut plane_x, &mut plane_y)
                 }
+}
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() == 3 {
+        client(args[1].clone(), args[2].clone());
     }
     else if args.len() == 2 {
         server(args[1].clone());
