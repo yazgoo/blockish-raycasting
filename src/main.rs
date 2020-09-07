@@ -3,6 +3,10 @@ extern crate image;
 extern crate crossterm_input;
 extern crate laminar;
 extern crate bincode;
+extern crate reqwest;
+#[macro_use] extern crate scan_fmt;
+
+use std::io::prelude::*;
 
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
@@ -22,6 +26,9 @@ use std::fmt::Debug;
 struct Position {
     x: f32,
     y: f32,
+    dirX: f32,
+    dirY: f32,
+    speed: f32
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -29,6 +36,7 @@ enum ServerMessage {
     MessagePositions(HashMap<SocketAddr, Position>),
     MessageWorldMap(Vec<Vec<u8>>),
     MessageSprites(Vec<Vec<f32>>),
+    MessageTexturesZip(String),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -320,9 +328,10 @@ fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32
   }
 }
 
-fn move_player(option_event: Option<crossterm_input::InputEvent>,worldMap: &Vec<Vec<u8>>, posX: &mut f32, posY: &mut f32, dirX: &mut f32, dirY: &mut f32, planeX: &mut f32, planeY: &mut f32) {
+fn move_player(option_event: Option<crossterm_input::InputEvent>,worldMap: &Vec<Vec<u8>>, posX: &mut f32, posY: &mut f32, dirX: &mut f32, dirY: &mut f32, planeX: &mut f32, planeY: &mut f32) -> f32 {
     let rotSpeed : f32 = 0.1;
-    let moveSpeed: f32 = 0.1;
+    let moveSpeed : f32 = 0.1;
+    let mut res = 0.0;
         match option_event {
             Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Up)) => {
                 if worldMap[(*posX + *dirX * moveSpeed) as usize][(*posY) as usize] == 0 { 
@@ -331,6 +340,7 @@ fn move_player(option_event: Option<crossterm_input::InputEvent>,worldMap: &Vec<
                 if worldMap[(*posX) as usize][(*posY + *dirY * moveSpeed) as usize] == 0 {
                     *posY += *dirY * moveSpeed;
                 }
+                res = moveSpeed;
             },
             Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Down)) => {
                 if worldMap[(*posX - *dirX * moveSpeed) as usize][(*posY) as usize] == 0 { 
@@ -339,6 +349,7 @@ fn move_player(option_event: Option<crossterm_input::InputEvent>,worldMap: &Vec<
                 if worldMap[(*posX) as usize][(*posY - *dirY * moveSpeed) as usize] == 0 {
                     *posY -= *dirY * moveSpeed;
                 }
+                res = -moveSpeed;
             },
             Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Esc)) => {
                 std::process::exit(1);
@@ -361,6 +372,7 @@ fn move_player(option_event: Option<crossterm_input::InputEvent>,worldMap: &Vec<
             },
             _ => {}
         }
+        res
 }
 
 fn server(address: String) {
@@ -418,6 +430,7 @@ fn server(address: String) {
                 vec![10.0, 15.1,8.0],
                 vec![10.5, 15.8,8.0],
                 ];
+        let mut textures_url = "https://srv-file10.gofile.io/download/GrF7ZN/wolfenstein_textures.zip";
     // Creates the socket
     let mut socket = Socket::bind(address).unwrap();
     let packet_sender = socket.get_packet_sender();
@@ -426,6 +439,7 @@ fn server(address: String) {
     let _thread = thread::spawn(move || socket.start_polling());
 
     let mut positions = HashMap::new();
+    let mut last_seen = HashMap::new();
 
     loop {
         // Waits until a socket event occurs
@@ -440,8 +454,21 @@ fn server(address: String) {
                         let message = bincode::deserialize::<ClientMessage>(received_data).unwrap();
                         match message {
                             ClientMessage::MessagePosition(pos) => {
+                                last_seen.insert(endpoint, Instant::now());
                                 positions.insert(endpoint, pos);
+
+                                let now = Instant::now();
                                 println!("positions {:?}", positions);
+                                let mut to_remove = vec![];
+                                for (key, value) in &positions {
+                                    if now - last_seen[key] > Duration::from_secs(20) {
+                                        to_remove.push(key.clone());
+                                    }
+                                }
+                                for key in to_remove {
+                                    positions.remove(&key);
+                                    last_seen.remove(&key);
+                                }
                                 let mut positionsClone = HashMap::new();
                                 for (key, value) in &positions {
                                     if key != &endpoint {
@@ -459,6 +486,9 @@ fn server(address: String) {
                                 let sprites_message = ServerMessage::MessageSprites(sprites.clone());
                                 let message_ser = bincode::serialize(&sprites_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
+                                let textures_message = ServerMessage::MessageTexturesZip(String::from(textures_url));
+                                let message_ser = bincode::serialize(&textures_message).unwrap();
+                                packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
                             }
                         }
                     },
@@ -471,6 +501,27 @@ fn server(address: String) {
             }
         }
     }
+}
+
+fn load_textures(url: String) -> Vec<Vec<u8>> {
+    let texture_size = 64;
+    let resp = reqwest::blocking::get(&url).unwrap().bytes().unwrap();
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(resp)).unwrap();
+    let mut textures = HashMap::new();
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        if !(&*file.name()).ends_with('/') {
+            let mut bytes = vec![0; file.size() as usize];
+            file.read(&mut bytes).unwrap();
+            let someindex = scan_fmt_some!(file.name(), "pics/{d}.png", usize);
+            let index = someindex.unwrap();
+            textures.insert(index,
+                image::load(std::io::Cursor::new(bytes),  image::ImageFormat::PNG).unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw());
+        }
+    }
+    let mut v: Vec<_> = textures.into_iter().collect();
+    v.sort_by(|x,y| x.0.cmp(&y.0));
+    v.into_iter().map(|x| x.1).collect()
 }
 
 fn main() {
@@ -542,25 +593,26 @@ fn main() {
             let mut sprites = vec![];
 
                 let texture_size = 64; // must be a power of two so that fractional part in floor ceiling computation work
-                let img = image::open("pics/eagle.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb();
-                let texture_width = img.width();
-                let texture_height = img.height();
-                let raw = img.into_raw();
-                let textures = vec![
-                    image::open("pics/eagle.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("pics/redbrick.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("pics/purplestone.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("pics/greystone.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("pics/bluestone.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("pics/mossy.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("pics/wood.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("pics/colorstone.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("pics/barrel.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("pics/pillar.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
-                    image::open("pics/greenlight.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+                let texture_width = 64;
+                let texture_height = 64;
+                /*
+                */
+                let mut textures = vec![
+                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+                    image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+                ];
+                let mut character_textures = vec![
                     image::open("free-pics/character.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
                 ];
-
                 let mut socket = Socket::bind(args[2].clone()).unwrap();
                 let packet_sender = socket.get_packet_sender();
                 let event_receiver = socket.get_event_receiver();
@@ -570,6 +622,9 @@ fn main() {
                 let mut i = 0;
                 let mut startup = true;
                 let mut characters : Vec<Vec<f32>> = vec![];
+
+                let mut moveSpeed: f32 = 0.0;
+                let mut characterPositions = vec![];
                 loop {
                     let mut stuff_to_read = true;
                     while stuff_to_read {
@@ -584,13 +639,17 @@ fn main() {
                                             ServerMessage::MessageSprites(s) => {
                                                 sprites = s;
                                             },
+                                            ServerMessage::MessageTexturesZip(s) => {
+                                                textures = load_textures(s);
+                                            },
                                             ServerMessage::MessageWorldMap(map) => {
                                                 worldMap = map;
                                             },
                                             ServerMessage::MessagePositions(positions) => {
                                                 characters = vec![];
+                                                characterPositions = vec![];
                                                 for position in positions {
-                                                    characters.push(vec![position.1.x, position.1.y, 11.0]);
+                                                    characterPositions.push(position.1);
                                                 }
                                             },
                                         }
@@ -604,14 +663,28 @@ fn main() {
                             }
                         }
                     }
-                    if i > 30 {
+                    let mut characters = vec![];
+                    characterPositions = characterPositions.iter().map ( |position| {
+                        Position {
+                            x: position.x + position.speed * position.dirX * 0.1,
+                            y: position.y + position.speed * position.dirY * 0.1,
+                            dirX: position.dirX,
+                            dirY: position.dirY,
+                            speed: position.speed
+                        }
+                    }
+                    ).collect::<Vec<Position>>();
+                    for position in &characterPositions {
+                        characters.push(vec![position.x, position.y, 0.0]);
+                    }
+                    if i > 15 {
                         if startup {
                             let message = ClientMessage::MessageHello;
                             let messageSer = bincode::serialize(&message).unwrap();
                             packet_sender.send(Packet::reliable_unordered(server, messageSer)).unwrap();
                             startup = false;
                         }
-                        let pos = ClientMessage::MessagePosition(Position { x : posX, y : posY });
+                        let pos = ClientMessage::MessagePosition(Position { x : posX, y : posY, dirX: dirX, dirY: dirY, speed: moveSpeed });
                         let posSer = bincode::serialize(&pos).unwrap();
                         packet_sender.send(Packet::reliable_unordered(server, posSer)).unwrap();
                         i = 0;
@@ -623,7 +696,7 @@ fn main() {
                     render_floor_ceiling(&textures, texture_width, texture_height, &mut color_buff, window_width, window_height, posX, posY, dirX, dirY, planeX, planeY);
                     render_walls(&textures, texture_width, texture_height, &worldMap, &mut color_buff, &mut depth_buff, window_width, window_height, posX, posY, dirX, dirY, planeX, planeY);
                     render_sprites(&sprites, &textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, posX, posY, dirX, dirY, planeX, planeY);
-                    render_sprites(&characters, &textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, posX, posY, dirX, dirY, planeX, planeY);
+                    render_sprites(&characters, &character_textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, posX, posY, dirX, dirY, planeX, planeY);
                     engine.render(&|x, y| {
                         let start = (y * window_height as u32 / term_height * window_width as u32 + (x * window_width as u32 / term_width))
                             as usize;
@@ -637,7 +710,7 @@ fn main() {
                         thread::sleep(waste_time);
                     }
                     let option_event = reader.next();
-                    move_player(option_event, &worldMap, &mut posX, &mut posY, &mut dirX, &mut dirY, &mut planeX, &mut planeY)
+                    moveSpeed = move_player(option_event, &worldMap, &mut posX, &mut posY, &mut dirX, &mut dirY, &mut planeX, &mut planeY)
                 }
     }
     else if args.len() == 2 {
