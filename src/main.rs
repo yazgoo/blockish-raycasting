@@ -5,6 +5,9 @@ extern crate laminar;
 extern crate bincode;
 extern crate reqwest;
 extern crate crossbeam_channel;
+extern crate font_kit;
+extern crate pathfinder_geometry;
+
 use rand::prelude::*;
 #[macro_use] extern crate scan_fmt;
 
@@ -19,9 +22,15 @@ use crossterm::terminal;
 use image::imageops::FilterType;
 
 use std::net::SocketAddr;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::env;
 use std::fmt::Debug;
+
+use font_kit::canvas::{Canvas, Format, RasterizationOptions};
+use font_kit::source::SystemSource;
+use pathfinder_geometry::transform2d::Transform2F;
+use font_kit::hinting::HintingOptions;
+use pathfinder_geometry::vector::{Vector2F, Vector2I};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Position {
@@ -39,6 +48,7 @@ enum ServerMessage {
     MessageSprites(Vec<Vec<f32>>),
     MessageTexturesZip(String),
     MessageGoldCoins(Vec<(f32, f32)>),
+    MessageText(String),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -115,7 +125,7 @@ fn render_floor_ceiling(textures: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32
 }
 
 fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32,color_buff: &mut Vec<u32>, depth_buff: &Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32, rgba: bool) {
-    let bytesPerPixel = if rgba { 4 } else { 3 };
+    let bytes_per_pixel = if rgba { 4 } else { 3 };
     let mut sorted_sprites = sprites.into_iter()
         .map( |x| (x, ((pos_x - x[0]) * (pos_x - x[0]) + (pos_y - x[1]) * (pos_y - x[1]))))
         .collect::<Vec<(&Vec<f32>, f32)>>();
@@ -180,7 +190,7 @@ fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_widt
                     let d = (y) * 256 - h as i32 * 128 + sprite_height * 128; //256 and 128 factors to avoid floats
                     let tex_y = ((d * texture_height as i32) / sprite_height) / 256;
                     let tex_i = tex_x as usize + tex_y as usize * texture_width as usize;
-                    let tex_i = (tex_i * bytesPerPixel) as usize;
+                    let tex_i = (tex_i * bytes_per_pixel) as usize;
                     let tex_id = sprite[2] as usize;
                     let color = textures[tex_id][tex_i] as u32 |
                         ((textures[tex_id][tex_i + 1] as u32) << 8) |
@@ -380,7 +390,8 @@ fn new_coin_position(world_map: &Vec<Vec<u8>>) -> (f32, f32) {
     }
 }
 
-fn check_gold_coins(world_map: &Vec<Vec<u8>>, packet_sender: &Sender<Packet>, gold_coins: &mut Vec<(f32, f32)>, positions : &HashMap<SocketAddr, Position>) {
+fn check_gold_coins(coins_found: u32, world_map: &Vec<Vec<u8>>, packet_sender: &Sender<Packet>, gold_coins: &mut Vec<(f32, f32)>, positions : &HashMap<SocketAddr, Position>) -> u32 {
+    let mut new_coins_found = coins_found;
     let mut gold_coins_changed = false;
     for (_, value) in positions {
         for i in 0..gold_coins.len() {
@@ -393,15 +404,29 @@ fn check_gold_coins(world_map: &Vec<Vec<u8>>, packet_sender: &Sender<Packet>, go
         }
     }
     if gold_coins_changed {
-        for (key, _) in positions {
-            let message = ServerMessage::MessageGoldCoins(gold_coins.clone());
-            let message_ser = bincode::serialize(&message).unwrap();
-            packet_sender.send(Packet::reliable_unordered(key.clone(), message_ser)).unwrap();
+        new_coins_found += 1;
+        if new_coins_found > 2 {
+            for (key, _) in positions {
+                let textures_message = ServerMessage::MessageText(format!("finished! {}", new_coins_found));
+                let message_ser = bincode::serialize(&textures_message).unwrap();
+                packet_sender.send(Packet::reliable_unordered(key.clone(), message_ser)).unwrap();
+            }
+        }
+        else {
+            for (key, _) in positions {
+                let textures_message = ServerMessage::MessageText(format!("coins {}", new_coins_found));
+                let message_ser = bincode::serialize(&textures_message).unwrap();
+                packet_sender.send(Packet::reliable_unordered(key.clone(), message_ser)).unwrap();
+                let message = ServerMessage::MessageGoldCoins(gold_coins.clone());
+                let message_ser = bincode::serialize(&message).unwrap();
+                packet_sender.send(Packet::reliable_unordered(key.clone(), message_ser)).unwrap();
+            }
         }
     }
-
+    new_coins_found
 }
 fn server(address: String) {
+    let mut coins_found = 0;
     let world_map : Vec<Vec<u8>> =
         vec![
         vec![8,8,8,8,8,8,8,8,8,8,8,4,4,6,4,4,6,4,6,4,4,4,6,4],
@@ -505,7 +530,7 @@ fn server(address: String) {
                                         positions_clone.insert(key.clone(), value.clone());
                                     }
                                 }
-                                check_gold_coins(&world_map, &packet_sender, &mut gold_coins, &positions);
+                                coins_found = check_gold_coins(coins_found, &world_map, &packet_sender, &mut gold_coins, &positions);
                                 let positions_message = ServerMessage::MessagePositions(positions_clone);
                                 let pos_ser = bincode::serialize(&positions_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, pos_ser)).unwrap();
@@ -521,6 +546,9 @@ fn server(address: String) {
                                 let message_ser = bincode::serialize(&textures_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
                                 let textures_message = ServerMessage::MessageGoldCoins(gold_coins.clone());
+                                let message_ser = bincode::serialize(&textures_message).unwrap();
+                                packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
+                                let textures_message = ServerMessage::MessageText(String::from("Hello !"));
                                 let message_ser = bincode::serialize(&textures_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
                             }
@@ -556,6 +584,29 @@ fn load_textures(url: String) -> Vec<Vec<u8>> {
     let mut v: Vec<_> = textures.into_iter().collect();
     v.sort_by(|x,y| x.0.cmp(&y.0));
     v.into_iter().map(|x| x.1).collect()
+}
+
+fn generate_text(text: String, text_width: i32, text_height: i32) -> Vec<u32> {
+    let font = SystemSource::new()
+        .select_by_postscript_name("DejaVuSans")
+        .unwrap()
+        .load()
+        .unwrap();
+    let mut canvas = Canvas::new(Vector2I::new(text_width, text_height), Format::A8);
+    let mut i = 0;
+    for c in text.char_indices() {
+        let glyph_id = font.glyph_for_char(c.1).unwrap();
+        font.rasterize_glyph(
+            &mut canvas,
+            glyph_id,
+            32.0, // chosen font size for this example
+            Transform2F::from_translation(Vector2F::new(25.0 * i as f32, 32.0)),
+            HintingOptions::None,
+            RasterizationOptions::GrayscaleAa,
+        ).unwrap();
+        i += 1;
+    }
+    canvas.pixels.iter().map(|i| *i as u32).collect()
 }
 
 fn client(server_address: String, client_address: String) {
@@ -644,6 +695,13 @@ fn client(server_address: String, client_address: String) {
                     image::open("goldCoin/goldCoin9.png").unwrap().to_rgba().into_raw(),
                 ];
 
+                /* font stuff */
+                let mut text = String::from("loading...");
+                let text_width = 300;
+                let text_height = 40;
+                let mut text_buff = generate_text(text, text_width, text_height);
+                /* end font struff */
+
                 let mut gold_coins = vec![
                 ];
                 let mut socket = Socket::bind(client_address.clone()).unwrap();
@@ -673,6 +731,10 @@ fn client(server_address: String, client_address: String) {
                                             },
                                             ServerMessage::MessageTexturesZip(s) => {
                                                 textures = load_textures(s);
+                                            },
+                                            ServerMessage::MessageText(txt) => {
+                                                text = txt;
+                                                text_buff = generate_text(text, text_width, text_height);
                                             },
                                             ServerMessage::MessageWorldMap(map) => {
                                                 world_map = map;
@@ -740,6 +802,14 @@ fn client(server_address: String, client_address: String) {
                     render_sprites(&sprites, &textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, false);
                     render_sprites(&characters, &character_textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, false);
                     render_sprites(&gold_coins, &goldcoin_textures, coin_width, coin_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true);
+
+                    for y in 0..text_height {
+                        for x in 0..text_width {
+                            let pixelIDest = (y * window_width as i32 + x) as usize;
+                            let pixelISrc = (y * text_width as i32 + x) as usize;
+                            color_buff[pixelIDest] |= text_buff[pixelISrc];
+                        }
+                    }
                     print!("\x1b[{};0f", 0);
                     engine.render(&|x, y| {
                         let start = (y * window_height as u32 / term_height * window_width as u32 + (x * window_width as u32 / term_width))
