@@ -7,6 +7,11 @@ extern crate reqwest;
 extern crate crossbeam_channel;
 extern crate font_kit;
 extern crate pathfinder_geometry;
+extern crate rodio;
+
+use std::fs::File;
+use std::io::BufReader;
+use rodio::Source;
 
 use rand::prelude::*;
 #[macro_use] extern crate scan_fmt;
@@ -54,7 +59,7 @@ enum ServerMessage {
 #[derive(Serialize, Deserialize, Debug)]
 enum ClientMessage {
     MessagePosition(Position),
-    MessageHello,
+    MessageHello(String),
 }
 
 fn render_floor_ceiling(textures: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32, color_buff: &mut Vec<u32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32) {
@@ -390,41 +395,49 @@ fn new_coin_position(world_map: &Vec<Vec<u8>>) -> (f32, f32) {
     }
 }
 
-fn check_gold_coins(coins_found: u32, world_map: &Vec<Vec<u8>>, packet_sender: &Sender<Packet>, gold_coins: &mut Vec<(f32, f32)>, positions : &HashMap<SocketAddr, Position>) -> u32 {
+fn check_gold_coins(coins_found: u32, world_map: &Vec<Vec<u8>>, packet_sender: &Sender<Packet>, gold_coins: &mut Vec<(f32, f32)>, positions : &HashMap<SocketAddr, Position>, nicknames: &HashMap<SocketAddr, String>, points: &mut HashMap<SocketAddr, u8>) -> u32 {
     let mut new_coins_found = coins_found;
-    let mut gold_coins_changed = false;
-    for (_, value) in positions {
+    let mut who = None;
+    for (key, value) in positions {
         for i in 0..gold_coins.len() {
             if (value.x as i32, value.y as i32) == (gold_coins[i].0 as i32, gold_coins[i].1 as i32) {
                 let (new_x, new_y) = new_coin_position(world_map);
                 gold_coins[i].0 = new_x;
                 gold_coins[i].1 = new_y;
-                gold_coins_changed = true;
+                who = Some(key);
+                let who_points = points.get(key).unwrap();
+                points.insert(*key, who_points + 1);
             }
         }
     }
-    if gold_coins_changed {
+    if let Some(winner_endpoint) = who {
         new_coins_found += 1;
-        if new_coins_found > 2 {
+        if new_coins_found > 1 {
             for (key, _) in positions {
-                let textures_message = ServerMessage::MessageText(format!("finished! {}", new_coins_found));
+                let final_winner_endpoint = points.iter().max_by_key(|entry | entry.1).unwrap();
+                let winner = nicknames.get(final_winner_endpoint.0).unwrap();
+                let textures_message = ServerMessage::MessageText(format!("winner: {}", winner));
                 let message_ser = bincode::serialize(&textures_message).unwrap();
                 packet_sender.send(Packet::reliable_unordered(key.clone(), message_ser)).unwrap();
+                points.insert(*key, 0);
             }
         }
         else {
             for (key, _) in positions {
-                let textures_message = ServerMessage::MessageText(format!("coins {}", new_coins_found));
+                let textures_message = ServerMessage::MessageText(format!("coin {}: {}", new_coins_found, nicknames.get(winner_endpoint).unwrap()));
                 let message_ser = bincode::serialize(&textures_message).unwrap();
                 packet_sender.send(Packet::reliable_unordered(key.clone(), message_ser)).unwrap();
-                let message = ServerMessage::MessageGoldCoins(gold_coins.clone());
-                let message_ser = bincode::serialize(&message).unwrap();
-                packet_sender.send(Packet::reliable_unordered(key.clone(), message_ser)).unwrap();
             }
+        }
+        for (key, _) in positions {
+            let message = ServerMessage::MessageGoldCoins(gold_coins.clone());
+            let message_ser = bincode::serialize(&message).unwrap();
+            packet_sender.send(Packet::reliable_unordered(key.clone(), message_ser)).unwrap();
         }
     }
     new_coins_found
 }
+
 fn server(address: String) {
     let mut coins_found = 0;
     let world_map : Vec<Vec<u8>> =
@@ -495,6 +508,8 @@ fn server(address: String) {
 
     let mut positions = HashMap::new();
     let mut last_seen = HashMap::new();
+    let mut nicknames = HashMap::new();
+    let mut points = HashMap::new();
 
     loop {
         // Waits until a socket event occurs
@@ -530,12 +545,14 @@ fn server(address: String) {
                                         positions_clone.insert(key.clone(), value.clone());
                                     }
                                 }
-                                coins_found = check_gold_coins(coins_found, &world_map, &packet_sender, &mut gold_coins, &positions);
+                                coins_found = check_gold_coins(coins_found, &world_map, &packet_sender, &mut gold_coins, &positions, &nicknames, &mut points);
                                 let positions_message = ServerMessage::MessagePositions(positions_clone);
                                 let pos_ser = bincode::serialize(&positions_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, pos_ser)).unwrap();
                             },
-                            ClientMessage::MessageHello => {
+                            ClientMessage::MessageHello(nickname) => {
+                                nicknames.insert(endpoint, nickname);
+                                points.insert(endpoint, 0);
                                 let map_message = ServerMessage::MessageWorldMap(world_map.clone());
                                 let message_ser = bincode::serialize(&map_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
@@ -609,7 +626,14 @@ fn generate_text(text: String, text_width: i32, text_height: i32) -> Vec<u32> {
     canvas.pixels.iter().map(|i| *i as u32).collect()
 }
 
-fn client(server_address: String, client_address: String) {
+fn play_sound(sound_device: &rodio::Device, path: String) {
+    let file = File::open(path).unwrap();
+    let source = rodio::Decoder::new(BufReader::new(file)).unwrap();
+    let coin_sound_samples = source.convert_samples();
+    rodio::play_raw(&sound_device, coin_sound_samples);
+}
+
+fn client(server_address: String, client_address: String, nickname: String) {
         let window_width = 640;
         let window_height = 320;
         let time_per_frame = 1000/ 60;
@@ -619,6 +643,8 @@ fn client(server_address: String, client_address: String) {
 
         let mut term_width = 0 as u32;
         let mut term_height = 0 as u32;
+
+        let sound_device = rodio::default_output_device().unwrap();
 
         match terminal::size() {
             Ok(res) => {
@@ -640,6 +666,8 @@ fn client(server_address: String, client_address: String) {
         let mut dir_y = 0.0;
         let mut pos_x = 22.0;
         let mut pos_y = 12.0;
+        let mut previous_pos_x = 22.0;
+        let mut previous_pos_y = 12.0;
         let mut plane_x = 0.0;
         let mut plane_y = 0.66; //the 2d raycaster version of camera plane
 
@@ -679,7 +707,7 @@ fn client(server_address: String, client_address: String) {
                 let default_texture = image::open("free-pics/default.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw();
                 let mut textures = vec![default_texture; 11];
                 let character_textures = vec![
-                    image::open("free-pics/character.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
+                    image::open("free-pics/character2.png").unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw(),
                 ];
                 let coin_width = 32;
                 let coin_height = 32;
@@ -740,6 +768,7 @@ fn client(server_address: String, client_address: String) {
                                                 world_map = map;
                                             },
                                             ServerMessage::MessageGoldCoins(gcs) => {
+                                                play_sound(&sound_device, String::from("sound/picked-coin-echo.mp3"));
                                                 gold_coins = vec![];
                                                 for gc in gcs {
                                                     gold_coins.push(vec![gc.0, gc.1, 0.0]);
@@ -779,12 +808,17 @@ fn client(server_address: String, client_address: String) {
                     let now = Instant::now();
                     if (now - previous) > Duration::from_millis(500) {
                         if startup {
-                            let message = ClientMessage::MessageHello;
+                            let message = ClientMessage::MessageHello(nickname.clone());
                             let message_ser = bincode::serialize(&message).unwrap();
                             packet_sender.send(Packet::reliable_unordered(server, message_ser)).unwrap();
                             startup = false;
                         }
+                        if previous_pos_x != pos_x || previous_pos_y != pos_y {
+                            play_sound(&sound_device, String::from("sound/wood03.ogg"));
+                        }
                         let pos = ClientMessage::MessagePosition(Position { x : pos_x, y : pos_y, dir_x: dir_x, dir_y: dir_y, speed: move_speed });
+                        previous_pos_x = pos_x;
+                        previous_pos_y = pos_y;
                         let pos_ser = bincode::serialize(&pos).unwrap();
                         packet_sender.send(Packet::reliable_unordered(server, pos_ser)).unwrap();
                         previous = now;
@@ -831,8 +865,8 @@ fn client(server_address: String, client_address: String) {
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() == 3 {
-        client(args[1].clone(), args[2].clone());
+    if args.len() == 4 {
+        client(args[1].clone(), args[2].clone(), args[3].clone());
     }
     else if args.len() == 2 {
         server(args[1].clone());
@@ -841,7 +875,7 @@ fn main() {
         println!("usage");
         println!("    server: <server address>");
         println!("       e.g:  0.0.0.0:12345");
-        println!("    client: <server address> <client address>");
-        println!("       e.g:  0.0.0.0:12345    0.0.0.0:12346");
+        println!("    client: <server address> <client address> <nickname>");
+        println!("       e.g:  0.0.0.0:12345    0.0.0.0:12346    yazgoo");
     }
 }

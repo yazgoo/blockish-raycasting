@@ -21,6 +21,7 @@ zip = "0.5"
 scan_fmt = "0.2"
 font-kit = "0.10"
 pathfinder_geometry = "0.5"
+rodio = "0.11"
 
 [profile.release]
 debug=1

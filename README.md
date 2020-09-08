@@ -17,3 +17,4 @@ escape to quit.
 # artwork
 
 gold coin by morgan3d https://opengameart.org/content/spinning-gold-coin CC-BY 3.0
+picked coin echo by NenadSimic https://opengameart.org/content/picked-coin-echo CC-BY 3.0
