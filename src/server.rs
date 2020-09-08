@@ -26,16 +26,16 @@ fn check_gold_coins(coins_found: u32, world_map: &Vec<Vec<u8>>, packet_sender: &
     }
     if let Some(winner_endpoint) = who {
         new_coins_found += 1;
-        if new_coins_found > 1 {
+        if new_coins_found > 2 {
+            let final_winner_endpoint = points.iter().max_by_key(|entry | entry.1).unwrap();
+            let winner = nicknames.get(final_winner_endpoint.0).unwrap();
             for (key, _) in positions {
-                let final_winner_endpoint = points.iter().max_by_key(|entry | entry.1).unwrap();
-                let winner = nicknames.get(final_winner_endpoint.0).unwrap();
                 let textures_message = ServerMessage::MessageText(format!("winner: {}", winner), Duration::from_secs(10));
                 let message_ser = bincode::serialize(&textures_message).unwrap();
                 packet_sender.send(Packet::reliable_unordered(key.clone(), message_ser)).unwrap();
                 points.insert(*key, 0);
-                new_coins_found = 0;
             }
+            new_coins_found = 0;
         }
         else {
             for (key, _) in positions {
@@ -89,7 +89,7 @@ pub fn server(address: String) {
         vec![2,0,0,0,0,0,0,0,2,4,0,0,0,0,0,0,4,3,0,0,0,0,0,3],
         vec![1,0,0,0,0,0,0,0,1,4,4,4,4,4,6,0,6,3,3,0,0,0,3,3],
         vec![2,0,0,0,0,0,0,0,2,2,2,1,2,2,2,6,6,0,0,5,0,5,5,5],
-        vec![2,2,0,0,0,0,0,2,2,2,0,0,0,2,2,0,5,0,5,0,0,0,5,5],
+        vec![2,2,0,0,0,0,0,2,2,2,0,0,0,2,2,5,5,0,5,0,0,0,5,5],
         vec![2,0,0,0,0,0,0,0,2,0,0,0,0,0,2,5,0,5,0,5,0,5,0,5],
         vec![1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5],
         vec![2,0,0,0,0,0,0,0,2,0,0,0,0,0,2,5,0,5,0,5,0,5,0,5],
