@@ -170,7 +170,7 @@ fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_widt
                     let color = textures[tex_id][tex_i] as u32 |
                         ((textures[tex_id][tex_i + 1] as u32) << 8) |
                         ((textures[tex_id][tex_i + 2] as u32) << 16);
-                    if (!rgba && (color & 0x00_fFFFFF) != 0) || (rgba && textures[tex_id][tex_i + 2] != 0xff) {
+                    if (!rgba && (color & 0x00_fFFFFF) != 0) || (rgba && textures[tex_id][tex_i + 3] != 0) {
                         color_buff[y as usize * w + stripe as usize] = color as u32
                     }
                 }
@@ -496,6 +496,19 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
             image::open("goldCoin/goldCoin8.png").unwrap().to_rgba().into_raw(),
             image::open("goldCoin/goldCoin9.png").unwrap().to_rgba().into_raw(),
         ];
+        let torch_width = 32;
+        let torch_height = 32;
+        let torch_textures = vec![
+            image::open("torch/Torch-00.png").unwrap().to_rgba().into_raw(),
+            image::open("torch/Torch-01.png").unwrap().to_rgba().into_raw(),
+            image::open("torch/Torch-02.png").unwrap().to_rgba().into_raw(),
+            image::open("torch/Torch-03.png").unwrap().to_rgba().into_raw(),
+            image::open("torch/Torch-04.png").unwrap().to_rgba().into_raw(),
+            image::open("torch/Torch-05.png").unwrap().to_rgba().into_raw(),
+        ];
+        let mut torches = vec![
+            vec![22.0, 10.1, 0.0]
+        ];
 
         /* font stuff */
         let mut text = String::from("loading...");
@@ -613,8 +626,14 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
                 previous = now;
                 for i in 0..gold_coins.len() {
                     gold_coins[i][2] += 1.0;
-                    if gold_coins[i][2] > 8.0 {
+                    if gold_coins[i][2] as usize >= goldcoin_textures.len()  {
                         gold_coins[i][2] = 0.0;
+                    }
+                }
+                for i in 0..torches.len() {
+                    torches[i][2] += 1.0;
+                    if torches[i][2] as usize >= torch_textures.len() {
+                        torches[i][2] = 0.0;
                     }
                 }
             }
@@ -625,6 +644,7 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
             render_sprites(&sprites, &textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, false);
             render_sprites(&characters, &character_textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, false);
             render_sprites(&gold_coins, &goldcoin_textures, coin_width, coin_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true);
+            render_sprites(&torches, &torch_textures, torch_width, torch_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true);
 
             for y in 0..text_height {
                 for x in 0..text_width {
