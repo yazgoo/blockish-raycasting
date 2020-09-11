@@ -182,7 +182,8 @@ pub fn server(address: String) {
                             ClientMessage::MessageHello(nickname) => {
                                 nicknames.insert(endpoint, nickname);
                                 points.insert(endpoint, 0);
-                                let (x, y) = random_position(&world_map);
+                                // let (x, y) = random_position(&world_map);
+                                let (x, y) = (20.5, 12.0);
                                 let map_message = ServerMessage::MessageTeleport(Position { x: x, y: y, dir_x: -1.0, dir_y: 0.0, speed: 0.0 });
                                 let message_ser = bincode::serialize(&map_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();

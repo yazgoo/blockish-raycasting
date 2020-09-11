@@ -99,7 +99,9 @@ fn render_floor_ceiling(textures: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32
     }
 }
 
-fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32,color_buff: &mut Vec<u32>, depth_buff: &Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32, rgba: bool, portal_mapping: bool) {
+fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32,color_buff: &mut Vec<u32>, depth_buff: &Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32, rgba: bool, portal_mapping: bool) -> bool {
+    let mut rendering_occured = false;
+    let mut portal_takes_full_screen = true;
     let bytes_per_pixel = if rgba { 4 } else { 3 };
     let mut sorted_sprites = sprites.into_iter()
         .map( |x| (x, ((pos_x - x[0]) * (pos_x - x[0]) + (pos_y - x[1]) * (pos_y - x[1]))))
@@ -129,22 +131,26 @@ fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_widt
         //calculate height of the sprite on screen
         let sprite_height = ((h as f32 / (transform_y)) as i32).abs(); //using 'transform_y' instead of the real distance prevents fisheye
         //calculate lowest and highest pixel to fill in current stripe
-        let mut draw_start_y = -sprite_height / 2 + h as i32 / 2;
+        let draw_start_y_no_limit = -sprite_height / 2 + h as i32 / 2;
+        let mut draw_start_y = draw_start_y_no_limit;
         if draw_start_y < 0 {
             draw_start_y = 0;
         }
-        let mut draw_end_y = sprite_height / 2 + h as i32 / 2;
+        let draw_end_y_no_limit = sprite_height / 2 + h as i32 / 2;
+        let mut draw_end_y = draw_end_y_no_limit;
         if draw_end_y >= h as i32  {
             draw_end_y = h as i32 - 1;
         }
 
         //calculate width of the sprite
         let sprite_width = ((h as f32/ (transform_y)) as i32).abs();
-        let mut draw_start_x = -sprite_width / 2 + sprite_screen_x as i32;
+        let draw_start_x_no_limit = -sprite_width / 2 + sprite_screen_x as i32;
+        let mut draw_start_x = draw_start_x_no_limit;
         if draw_start_x < 0 {
             draw_start_x = 0;
         }
-        let mut draw_end_x = sprite_width / 2 + sprite_screen_x as i32;
+        let draw_end_x_no_limit = sprite_width / 2 + sprite_screen_x as i32;
+        let mut draw_end_x = draw_end_x_no_limit;
         if draw_end_x >= w as i32 {
             draw_end_x = w as i32 - 1;
         }
@@ -162,26 +168,44 @@ fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_widt
             if transform_y > 0.0 && stripe > 0 && stripe < w as i32 && transform_y < depth_buff[stripe as usize] {
                 for y in draw_start_y..draw_end_y
                 {
-                    let d = (y) * 256 - h as i32 * 128 + sprite_height * 128; //256 and 128 factors to avoid floats
-                    let tex_y = ((d * texture_height as i32) / sprite_height) / 256;
-                    let tex_i = if portal_mapping {
-                        stripe as usize + y as usize * texture_width as usize
+                    rendering_occured = true;
+                    if portal_mapping && (stripe <= draw_start_x_no_limit + 3 || stripe >= draw_end_x_no_limit - 3) {
+                        portal_takes_full_screen = false;
+                        color_buff[y as usize * w + stripe as usize] = 0xffffff as u32
                     }
                     else {
-                        tex_x as usize + tex_y as usize * texture_width as usize
-                    };
-                    let tex_i = (tex_i * bytes_per_pixel) as usize;
-                    let tex_id = sprite[2] as usize;
-                    let color = textures[tex_id][tex_i] as u32 |
-                        ((textures[tex_id][tex_i + 1] as u32) << 8) |
-                        ((textures[tex_id][tex_i + 2] as u32) << 16);
-                    if (!rgba && (color & 0x00_fFFFFF) != 0) || (rgba && textures[tex_id][tex_i + 3] != 0) {
-                        color_buff[y as usize * w + stripe as usize] = color as u32
+                        let d = (y) * 256 - h as i32 * 128 + sprite_height * 128; //256 and 128 factors to avoid floats
+                        let tex_y = ((d * texture_height as i32) / sprite_height) / 256;
+                        let tex_i = if portal_mapping {
+                            stripe as usize + y as usize * texture_width as usize
+                        }
+                        else {
+                            tex_x as usize + tex_y as usize * texture_width as usize
+                        };
+                        let tex_i = (tex_i * bytes_per_pixel) as usize;
+                        let tex_id = sprite[2] as usize;
+                        let color = textures[tex_id][tex_i] as u32 |
+                            ((textures[tex_id][tex_i + 1] as u32) << 8) |
+                            ((textures[tex_id][tex_i + 2] as u32) << 16);
+                        if rgba {
+                            let alpha = textures[tex_id][tex_i + 3] as u32;
+                            let tran = 0xff - alpha;
+                            let text = &textures[tex_id];
+                            let cbi = y as usize * w + stripe as usize;
+                            color_buff[cbi] = 
+                                ((text[tex_i] as u32 & alpha) | (color_buff[cbi] & tran))
+                                + (((((text[tex_i + 1] as u32) & alpha) << 8)) | ((color_buff[cbi]) & (tran << 8)))
+                                + (((((text[tex_i + 2] as u32) & alpha ) << 16))| ((color_buff[cbi]) & (tran << 16)));
+                        }
+                        else if (color & 0x00_fFFFFF) != 0 {
+                            color_buff[y as usize * w + stripe as usize] = color as u32
+                        }
                     }
                 }
             }
         }
     }
+    rendering_occured && portal_takes_full_screen
 }
 
 fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32, world_map: &Vec<Vec<u8>>, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32, start_dist: f32) {
@@ -356,6 +380,28 @@ fn move_player(option_event: Option<crossterm_input::InputEvent>,world_map: &Vec
                 *plane_x = *plane_x * (rot_speed).cos()  - *plane_y * (rot_speed).sin();
                 *plane_y = old_plane_x * (rot_speed).sin() + *plane_y * (rot_speed).cos();
             },
+            Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::CtrlRight)) => {
+                let _dir_x = *dir_x * (3.14/2.0 as f32).cos()  - *dir_y * (3.14/2.0 as f32).sin();
+                let _dir_y = *dir_x * (3.14/2.0 as f32).sin() + *dir_y * (3.14/2.0 as f32).cos();
+                if world_map[(*pos_x - _dir_x * move_speed) as usize][(*pos_y) as usize] == 0 { 
+                    *pos_x -= _dir_x * move_speed;
+                }
+                if world_map[(*pos_x) as usize][(*pos_y - _dir_y * move_speed) as usize] == 0 {
+                    *pos_y -= _dir_y * move_speed;
+                }
+                res = -move_speed;
+            },
+            Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::CtrlLeft)) => {
+                let _dir_x = *dir_x * (3.14/2.0 as f32).cos()  - *dir_y * (3.14/2.0 as f32).sin();
+                let _dir_y = *dir_x * (3.14/2.0 as f32).sin() + *dir_y * (3.14/2.0 as f32).cos();
+                if world_map[(*pos_x - _dir_x * move_speed) as usize][(*pos_y) as usize] == 0 { 
+                    *pos_x += _dir_x * move_speed;
+                }
+                if world_map[(*pos_x) as usize][(*pos_y - _dir_y * move_speed) as usize] == 0 {
+                    *pos_y += _dir_y * move_speed;
+                }
+                res = -move_speed;
+            },
             _ => {}
         }
         res
@@ -411,6 +457,15 @@ fn play_sound(sound_device: &rodio::Device, path: String) {
     let source = rodio::Decoder::new(BufReader::new(file)).unwrap();
     let coin_sound_samples = source.convert_samples();
     rodio::play_raw(&sound_device, coin_sound_samples);
+}
+
+fn render(textures: &Vec<Vec<u8>>, character_textures: &Vec<Vec<u8>>, goldcoin_textures: &Vec<Vec<u8>>,torch_textures: &Vec<Vec<u8>>, sprites: &Vec<Vec<f32>>, characters: &Vec<Vec<f32>>, gold_coins: &Vec<Vec<f32>>, torches: &Vec<Vec<f32>>, tex_width: u32, tex_height: u32, coin_width: u32, coin_height: u32, torch_width: u32, torch_height: u32, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, world_map: &Vec<Vec<u8>>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32, start_dist: f32) {
+    render_floor_ceiling(&textures, tex_width, tex_height, color_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y);
+    render_walls(&textures, tex_width, tex_height, &world_map, color_buff, depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, start_dist);
+    render_sprites(&sprites, &textures, tex_width, tex_height, color_buff, &depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, false, false);
+    render_sprites(&characters, &character_textures, tex_width, tex_height, color_buff, &depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, false, false);
+    render_sprites(&gold_coins, &goldcoin_textures, coin_width, coin_height, color_buff, &depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true, false);
+    render_sprites(&torches, &torch_textures, torch_width, torch_height, color_buff, &depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true, false);
 }
 
 pub fn client(server_address: String, client_address: String, nickname: String) {
@@ -527,7 +582,11 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
         ];
 
         let mut portals = vec![
-            vec![21.0, 10.1, 0.0]
+            vec![20.5, 10.1, 0.0]
+        ];
+
+        let mut portals_dests = vec![
+            vec![10.0, 10.0]
         ];
 
         let mut portals_textures = vec![
@@ -666,34 +725,33 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
 
             let dist_x = pos_x - portals[0][0];
             let dist_y = pos_y - portals[0][1];
-            let dest_pos_x = 10.0 + dist_x;
-            let dest_pos_y = 10.0 + dist_y;
+            let dest_pos_x = portals_dests[0][0] + dist_x;
+            let dest_pos_y = portals_dests[0][1] + dist_y;
             let start_dist = (dist_x * dist_x + dist_y * dist_y).sqrt();
             let render_portal = start_dist < 7.0;
 
             if render_portal {
-            render_floor_ceiling(&textures, texture_width, texture_height, &mut portal_color_buff, portal_width, portal_height, dest_pos_x, dest_pos_y, dir_x, dir_y, plane_x, plane_y);
-            render_walls(&textures, texture_width, texture_height, &world_map, &mut portal_color_buff, &mut portal_depth_buff, portal_width, portal_height, dest_pos_x, dest_pos_y, dir_x, dir_y, plane_x, plane_y, start_dist);
-            for y in 0..portal_height {
-                for x in 0..portal_width {
-                    let base32 = y * portal_width + x;
-                    let base8 = (y * portal_width + x) * 4;
-                    portals_textures[0][base8] = (portal_color_buff[base32] & 0xff) as u8;
-                    portals_textures[0][base8 + 1] = ((portal_color_buff[base32] >> 8) & 0xff) as u8;
-                    portals_textures[0][base8 + 2] = ((portal_color_buff[base32] >> 16) & 0xff) as u8;
-                    portals_textures[0][base8 + 3] = 0xff;
+                render(&textures, &character_textures, &goldcoin_textures, &torch_textures, &sprites, &characters, &gold_coins, &torches, texture_width, texture_height, coin_width, coin_height, torch_width, torch_height, &mut portal_color_buff, &mut portal_depth_buff, &world_map, portal_width, portal_height, dest_pos_x, dest_pos_y, dir_x, dir_y, plane_x, plane_y, start_dist);
+                for y in 0..portal_height {
+                    for x in 0..portal_width {
+                        let base32 = y * portal_width + x;
+                        let base8 = (y * portal_width + x) * 4;
+                        portals_textures[0][base8] = (portal_color_buff[base32] & 0xff) as u8;
+                        portals_textures[0][base8 + 1] = ((portal_color_buff[base32] >> 8) & 0xff) as u8;
+                        portals_textures[0][base8 + 2] = ((portal_color_buff[base32] >> 16) & 0xff) as u8;
+                        portals_textures[0][base8 + 3] = 0xff;
+                    }
                 }
             }
-            }
 
-            render_floor_ceiling(&textures, texture_width, texture_height, &mut color_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y);
-            render_walls(&textures, texture_width, texture_height, &world_map, &mut color_buff, &mut depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, 0.0);
-            render_sprites(&sprites, &textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, false, false);
-            render_sprites(&characters, &character_textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, false, false);
-            render_sprites(&gold_coins, &goldcoin_textures, coin_width, coin_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true, false);
-            render_sprites(&torches, &torch_textures, torch_width, torch_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true, false);
+            render(&textures, &character_textures, &goldcoin_textures, &torch_textures, &sprites, &characters, &gold_coins, &torches, texture_width, texture_height, coin_width, coin_height, torch_width, torch_height, &mut color_buff, &mut depth_buff, &world_map, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, 0.0);
             if render_portal {
-                render_sprites(&portals, &portals_textures, portal_width as u32, portal_height as u32, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true, true);
+                if render_sprites(&portals, &portals_textures, portal_width as u32, portal_height as u32, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true, true)
+                {
+                    pos_x = portals_dests[0][0];
+                    pos_y = portals_dests[0][1];
+                    play_sound(&sound_device, String::from("sound/teleport.mp3"));
+                }
             }
 
             for y in 0..text_height {
