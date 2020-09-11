@@ -99,7 +99,7 @@ fn render_floor_ceiling(textures: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32
     }
 }
 
-fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32,color_buff: &mut Vec<u32>, depth_buff: &Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32, rgba: bool) {
+fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32,color_buff: &mut Vec<u32>, depth_buff: &Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32, rgba: bool, portal_mapping: bool) {
     let bytes_per_pixel = if rgba { 4 } else { 3 };
     let mut sorted_sprites = sprites.into_iter()
         .map( |x| (x, ((pos_x - x[0]) * (pos_x - x[0]) + (pos_y - x[1]) * (pos_y - x[1]))))
@@ -164,7 +164,12 @@ fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_widt
                 {
                     let d = (y) * 256 - h as i32 * 128 + sprite_height * 128; //256 and 128 factors to avoid floats
                     let tex_y = ((d * texture_height as i32) / sprite_height) / 256;
-                    let tex_i = tex_x as usize + tex_y as usize * texture_width as usize;
+                    let tex_i = if portal_mapping {
+                        stripe as usize + y as usize * texture_width as usize
+                    }
+                    else {
+                        tex_x as usize + tex_y as usize * texture_width as usize
+                    };
                     let tex_i = (tex_i * bytes_per_pixel) as usize;
                     let tex_id = sprite[2] as usize;
                     let color = textures[tex_id][tex_i] as u32 |
@@ -179,7 +184,7 @@ fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_widt
     }
 }
 
-fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32, world_map: &Vec<Vec<u8>>, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32) {
+fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32, world_map: &Vec<Vec<u8>>, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32, start_dist: f32) {
 
 
   for x in 0..w
@@ -244,9 +249,11 @@ fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32
               map_y += step_y;
               side = 1;
           }
-          //Check if ray has hit a wall
-          if world_map[map_x as usize][map_y as usize] > 0 {
-              hit = 1;
+          if (side_dist_x * side_dist_x + side_dist_y * side_dist_y).sqrt() >= start_dist {
+              //Check if ray has hit a wall
+              if world_map[map_x as usize][map_y as usize] > 0 {
+                  hit = 1;
+              }
           }
       }
       //Calculate distance projected on camera direction (Euclidean distance will give fisheye effect!)
@@ -410,9 +417,14 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
     smcup();
     let window_width = 640;
     let window_height = 320;
+    let portal_width = window_width;
+    let portal_height = window_height;
     let time_per_frame = 1000/ 60;
     let mut color_buff : Vec<u32> = vec![0; window_width * window_height];
     let mut depth_buff : Vec<f32> = vec![0.0; window_width];
+    let mut portal_color_buff : Vec<u32> = vec![0; portal_width * portal_height];
+    let mut portal_color_buff_u8 : Vec<u8> = vec![0; portal_width * portal_height * 4];
+    let mut portal_depth_buff : Vec<f32> = vec![0.0; portal_width];
 
 
     let mut term_width = 0 as u32;
@@ -431,6 +443,9 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
     let mut engine = blockish::ThreadedEngine::new(term_width, term_height, false);
     for i in 0..window_width {
         color_buff[(window_height - 1) * window_width + i] = 36;
+    }
+    for i in 0..portal_width {
+        portal_color_buff[(portal_height - 1) * portal_width + i] = 36;
     }
     let _screen = crossterm_input::RawScreen::into_raw_mode();
     let input = crossterm_input::input();
@@ -506,8 +521,17 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
             image::open("torch/Torch-04.png").unwrap().to_rgba().into_raw(),
             image::open("torch/Torch-05.png").unwrap().to_rgba().into_raw(),
         ];
+
         let mut torches = vec![
             vec![22.0, 10.1, 0.0]
+        ];
+
+        let mut portals = vec![
+            vec![21.0, 10.1, 0.0]
+        ];
+
+        let mut portals_textures = vec![
+            portal_color_buff_u8
         ];
 
         /* font stuff */
@@ -616,7 +640,7 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
                     startup = false;
                 }
                 if previous_pos_x != pos_x || previous_pos_y != pos_y {
-                    play_sound(&sound_device, String::from("sound/wood03.ogg"));
+                    // play_sound(&sound_device, String::from("sound/wood03.ogg"));
                 }
                 let pos = ClientMessage::MessagePosition(Position { x : pos_x, y : pos_y, dir_x: dir_x, dir_y: dir_y, speed: move_speed });
                 previous_pos_x = pos_x;
@@ -639,12 +663,38 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
             }
 
             let start_time = Instant::now();
+
+            let dist_x = pos_x - portals[0][0];
+            let dist_y = pos_y - portals[0][1];
+            let dest_pos_x = 10.0 + dist_x;
+            let dest_pos_y = 10.0 + dist_y;
+            let start_dist = (dist_x * dist_x + dist_y * dist_y).sqrt();
+            let render_portal = start_dist < 7.0;
+
+            if render_portal {
+            render_floor_ceiling(&textures, texture_width, texture_height, &mut portal_color_buff, portal_width, portal_height, dest_pos_x, dest_pos_y, dir_x, dir_y, plane_x, plane_y);
+            render_walls(&textures, texture_width, texture_height, &world_map, &mut portal_color_buff, &mut portal_depth_buff, portal_width, portal_height, dest_pos_x, dest_pos_y, dir_x, dir_y, plane_x, plane_y, start_dist);
+            for y in 0..portal_height {
+                for x in 0..portal_width {
+                    let base32 = y * portal_width + x;
+                    let base8 = (y * portal_width + x) * 4;
+                    portals_textures[0][base8] = (portal_color_buff[base32] & 0xff) as u8;
+                    portals_textures[0][base8 + 1] = ((portal_color_buff[base32] >> 8) & 0xff) as u8;
+                    portals_textures[0][base8 + 2] = ((portal_color_buff[base32] >> 16) & 0xff) as u8;
+                    portals_textures[0][base8 + 3] = 0xff;
+                }
+            }
+            }
+
             render_floor_ceiling(&textures, texture_width, texture_height, &mut color_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y);
-            render_walls(&textures, texture_width, texture_height, &world_map, &mut color_buff, &mut depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y);
-            render_sprites(&sprites, &textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, false);
-            render_sprites(&characters, &character_textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, false);
-            render_sprites(&gold_coins, &goldcoin_textures, coin_width, coin_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true);
-            render_sprites(&torches, &torch_textures, torch_width, torch_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true);
+            render_walls(&textures, texture_width, texture_height, &world_map, &mut color_buff, &mut depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, 0.0);
+            render_sprites(&sprites, &textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, false, false);
+            render_sprites(&characters, &character_textures, texture_width, texture_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, false, false);
+            render_sprites(&gold_coins, &goldcoin_textures, coin_width, coin_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true, false);
+            render_sprites(&torches, &torch_textures, torch_width, torch_height, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true, false);
+            if render_portal {
+                render_sprites(&portals, &portals_textures, portal_width as u32, portal_height as u32, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true, true);
+            }
 
             for y in 0..text_height {
                 for x in 0..text_width {
