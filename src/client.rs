@@ -728,15 +728,21 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
 
             let start_time = Instant::now();
 
-            let dist_x = pos_x - portals[0][0];
-            let dist_y = pos_y - portals[0][1];
-            let dest_pos_x = portals_dests[0][0] + dist_x;
-            let dest_pos_y = portals_dests[0][1] + dist_y;
-            let start_dist = (dist_x * dist_x + dist_y * dist_y).sqrt();
-            let render_portal = start_dist < 7.0;
+            let mut portals_to_render = vec![];
 
-            if render_portal {
-                render(&textures, &character_textures, &goldcoin_textures, &torch_textures, &sprites, &characters, &gold_coins, &torches, texture_width, texture_height, coin_width, coin_height, torch_width, torch_height, &mut portal_color_buff, &mut portal_depth_buff, &world_map, portal_width, portal_height, dest_pos_x, dest_pos_y, dir_x, dir_y, plane_x, plane_y, start_dist, t);
+            for i in 0..portals.len() {
+                let dist_x = pos_x - portals[i][0];
+                let dist_y = pos_y - portals[i][1];
+                let dest_pos_x = portals_dests[i][0] + dist_x;
+                let dest_pos_y = portals_dests[i][1] + dist_y;
+                let start_dist = (dist_x * dist_x + dist_y * dist_y).sqrt();
+                if start_dist < 7.0 {
+                    portals_to_render.push((i, start_dist, dest_pos_x, dest_pos_y));
+                }
+            }
+
+            for (i, start_dist, dest_pos_x, dest_pos_y) in &portals_to_render {
+                render(&textures, &character_textures, &goldcoin_textures, &torch_textures, &sprites, &characters, &gold_coins, &torches, texture_width, texture_height, coin_width, coin_height, torch_width, torch_height, &mut portal_color_buff, &mut portal_depth_buff, &world_map, portal_width, portal_height, *dest_pos_x, *dest_pos_y, dir_x, dir_y, plane_x, plane_y, *start_dist, t);
                 for y in 0..portal_height {
                     for x in 0..portal_width {
                         let base32 = y * portal_width + x;
@@ -750,11 +756,11 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
             }
 
             render(&textures, &character_textures, &goldcoin_textures, &torch_textures, &sprites, &characters, &gold_coins, &torches, texture_width, texture_height, coin_width, coin_height, torch_width, torch_height, &mut color_buff, &mut depth_buff, &world_map, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, 0.0, t);
-            if render_portal {
+            for (i, start_dist, dest_pos_x, dest_pos_y) in &portals_to_render {
                 if render_sprites(&portals, &portals_textures, portal_width as u32, portal_height as u32, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true, true, t)
                 {
-                    pos_x = portals_dests[0][0];
-                    pos_y = portals_dests[0][1];
+                    pos_x = portals_dests[*i][0];
+                    pos_y = portals_dests[*i][1];
                     play_sound(&sound_device, String::from("sound/teleport.mp3"));
                 }
             }
