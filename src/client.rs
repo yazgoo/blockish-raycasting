@@ -100,107 +100,110 @@ fn render_floor_ceiling(textures: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32
     }
 }
 
-fn render_sprites(sprites: &Vec<Vec<f32>>, textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32,color_buff: &mut Vec<u32>, depth_buff: &Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32, rgba: bool, portal_mapping: bool, t: i32) -> bool {
+fn render_sprites(all_sprites_and_textures: &Vec<(&Vec<Vec<f32>>, &Vec<Vec<u8>>, u32, u32, bool, bool)>, color_buff: &mut Vec<u32>, depth_buff: &Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32, t: i32) -> bool {
     let mut rendering_occured = false;
     let mut portal_takes_full_screen = true;
-    let bytes_per_pixel = if rgba { 4 } else { 3 };
-    let mut sorted_sprites = sprites.into_iter()
-        .map( |x| (x, ((pos_x - x[0]) * (pos_x - x[0]) + (pos_y - x[1]) * (pos_y - x[1]))))
-        .collect::<Vec<(&Vec<f32>, f32)>>();
-    sorted_sprites.sort_by( |a, b| b.1.partial_cmp(&a.1).unwrap());
-    let sorted_sprites : Vec<&Vec<f32>> = sorted_sprites
-        .into_iter()
-        .map(|x| x.0)
-        .collect();
-    //sqrt not taken, unneeded
-    for sprite in sorted_sprites {
-        let sprite_x = sprite[0] - pos_x;
-        let sprite_y = sprite[1] - pos_y;
+    for sprites_and_textures in all_sprites_and_textures {
+        let (sprites, textures, texture_width, texture_height, rgba, portal_mapping) =  *sprites_and_textures;
+        let bytes_per_pixel = if rgba { 4 } else { 3 };
+        let mut sorted_sprites = sprites.into_iter()
+            .map( |x| (x, ((pos_x - x[0]) * (pos_x - x[0]) + (pos_y - x[1]) * (pos_y - x[1]))))
+            .collect::<Vec<(&Vec<f32>, f32)>>();
+        sorted_sprites.sort_by( |a, b| b.1.partial_cmp(&a.1).unwrap());
+        let sorted_sprites : Vec<&Vec<f32>> = sorted_sprites
+            .into_iter()
+            .map(|x| x.0)
+            .collect();
+        //sqrt not taken, unneeded
+        for sprite in sorted_sprites {
+            let sprite_x = sprite[0] - pos_x;
+            let sprite_y = sprite[1] - pos_y;
 
-        //transform sprite with the inverse camera matrix
-        // [ plane_x   dir_x ] -1                                       [ dir_y      -dir_x ]
-        // [               ]       =  1/(plane_x*dir_y-dir_x*plane_y) *   [                 ]
-        // [ plane_y   dir_y ]                                          [ -plane_y  plane_x ]
+            //transform sprite with the inverse camera matrix
+            // [ plane_x   dir_x ] -1                                       [ dir_y      -dir_x ]
+            // [               ]       =  1/(plane_x*dir_y-dir_x*plane_y) *   [                 ]
+            // [ plane_y   dir_y ]                                          [ -plane_y  plane_x ]
 
-        let inv_det = 1.0 / (plane_x * dir_y - dir_x * plane_y); //required for correct matrix multiplication
+            let inv_det = 1.0 / (plane_x * dir_y - dir_x * plane_y); //required for correct matrix multiplication
 
-        let transform_x = inv_det * (dir_y * sprite_x - dir_x * sprite_y);
-        let transform_y = inv_det * (-plane_y * sprite_x + plane_x * sprite_y); //this is actually the depth inside the screen, that what Z is in 3_d
+            let transform_x = inv_det * (dir_y * sprite_x - dir_x * sprite_y);
+            let transform_y = inv_det * (-plane_y * sprite_x + plane_x * sprite_y); //this is actually the depth inside the screen, that what Z is in 3_d
 
-        let sprite_screen_x = ((w as f32 / 2.0) * (1.0 + transform_x / transform_y)) as usize;
+            let sprite_screen_x = ((w as f32 / 2.0) * (1.0 + transform_x / transform_y)) as usize;
 
-        //calculate height of the sprite on screen
-        let sprite_height = ((h as f32 / (transform_y)) as i32).abs(); //using 'transform_y' instead of the real distance prevents fisheye
-        //calculate lowest and highest pixel to fill in current stripe
-        let draw_start_y_no_limit = -sprite_height / 2 + h as i32 / 2;
-        let mut draw_start_y = draw_start_y_no_limit;
-        if draw_start_y < 0 {
-            draw_start_y = 0;
-        }
-        let draw_end_y_no_limit = sprite_height / 2 + h as i32 / 2;
-        let mut draw_end_y = draw_end_y_no_limit;
-        if draw_end_y >= h as i32  {
-            draw_end_y = h as i32 - 1;
-        }
+            //calculate height of the sprite on screen
+            let sprite_height = ((h as f32 / (transform_y)) as i32).abs(); //using 'transform_y' instead of the real distance prevents fisheye
+            //calculate lowest and highest pixel to fill in current stripe
+            let draw_start_y_no_limit = -sprite_height / 2 + h as i32 / 2;
+            let mut draw_start_y = draw_start_y_no_limit;
+            if draw_start_y < 0 {
+                draw_start_y = 0;
+            }
+            let draw_end_y_no_limit = sprite_height / 2 + h as i32 / 2;
+            let mut draw_end_y = draw_end_y_no_limit;
+            if draw_end_y >= h as i32  {
+                draw_end_y = h as i32 - 1;
+            }
 
-        //calculate width of the sprite
-        let sprite_width = ((h as f32/ (transform_y)) as i32).abs();
-        let draw_start_x_no_limit = -sprite_width / 2 + sprite_screen_x as i32;
-        let mut draw_start_x = draw_start_x_no_limit;
-        if draw_start_x < 0 {
-            draw_start_x = 0;
-        }
-        let draw_end_x_no_limit = sprite_width / 2 + sprite_screen_x as i32;
-        let mut draw_end_x = draw_end_x_no_limit;
-        if draw_end_x >= w as i32 {
-            draw_end_x = w as i32 - 1;
-        }
+            //calculate width of the sprite
+            let sprite_width = ((h as f32/ (transform_y)) as i32).abs();
+            let draw_start_x_no_limit = -sprite_width / 2 + sprite_screen_x as i32;
+            let mut draw_start_x = draw_start_x_no_limit;
+            if draw_start_x < 0 {
+                draw_start_x = 0;
+            }
+            let draw_end_x_no_limit = sprite_width / 2 + sprite_screen_x as i32;
+            let mut draw_end_x = draw_end_x_no_limit;
+            if draw_end_x >= w as i32 {
+                draw_end_x = w as i32 - 1;
+            }
 
-        //loop through every vertical stripe of the sprite on screen
-        for stripe in draw_start_x..draw_end_x
-        {
-            let tex_x = (256 * (stripe - (-sprite_width / 2 + sprite_screen_x as i32)) * texture_width as i32 / sprite_width) as i32 / 256;
-            
-            //the conditions in the if are:
-            //1) it's in front of camera plane so you don't see things behind you
-            //2) it's on the screen (left)
-            //3) it's on the screen (right)
-            //4) ZBuffer, with perpendicular distance
-            if transform_y > 0.0 && stripe > 0 && stripe < w as i32 && transform_y < depth_buff[stripe as usize] {
-                for y in draw_start_y..draw_end_y
-                {
-                    rendering_occured = true;
-                    if portal_mapping && (stripe <= draw_start_x_no_limit + 3 || stripe >= draw_end_x_no_limit - 3) {
-                        portal_takes_full_screen = false;
-                        let r = ((y + t) * 10) % 0xff;
-                        color_buff[y as usize * w + stripe as usize] = (0xffff00 | r) as u32 
-                    }
-                    else {
-                        let d = (y) * 256 - h as i32 * 128 + sprite_height * 128; //256 and 128 factors to avoid floats
-                        let tex_y = ((d * texture_height as i32) / sprite_height) / 256;
-                        let tex_i = if portal_mapping {
-                            stripe as usize + y as usize * texture_width as usize
+            //loop through every vertical stripe of the sprite on screen
+            for stripe in draw_start_x..draw_end_x
+            {
+                let tex_x = (256 * (stripe - (-sprite_width / 2 + sprite_screen_x as i32)) * texture_width as i32 / sprite_width) as i32 / 256;
+
+                //the conditions in the if are:
+                //1) it's in front of camera plane so you don't see things behind you
+                //2) it's on the screen (left)
+                //3) it's on the screen (right)
+                //4) ZBuffer, with perpendicular distance
+                if transform_y > 0.0 && stripe > 0 && stripe < w as i32 && transform_y < depth_buff[stripe as usize] {
+                    for y in draw_start_y..draw_end_y
+                    {
+                        rendering_occured = true;
+                        if portal_mapping && (stripe <= draw_start_x_no_limit + 3 || stripe >= draw_end_x_no_limit - 3) {
+                            portal_takes_full_screen = false;
+                            let r = ((y + t) * 10) % 0xff;
+                            color_buff[y as usize * w + stripe as usize] = (0xffff00 | r) as u32 
                         }
                         else {
-                            tex_x as usize + tex_y as usize * texture_width as usize
-                        };
-                        let tex_i = (tex_i * bytes_per_pixel) as usize;
-                        let tex_id = sprite[2] as usize;
-                        let color = textures[tex_id][tex_i] as u32 |
-                            ((textures[tex_id][tex_i + 1] as u32) << 8) |
-                            ((textures[tex_id][tex_i + 2] as u32) << 16);
-                        if rgba {
-                            let alpha = textures[tex_id][tex_i + 3] as u32;
-                            let tran = 0xff - alpha;
-                            let text = &textures[tex_id];
-                            let cbi = y as usize * w + stripe as usize;
-                            color_buff[cbi] = 
-                                ((text[tex_i] as u32 & alpha) | (color_buff[cbi] & tran))
-                                + (((((text[tex_i + 1] as u32) & alpha) << 8)) | ((color_buff[cbi]) & (tran << 8)))
-                                + (((((text[tex_i + 2] as u32) & alpha ) << 16))| ((color_buff[cbi]) & (tran << 16)));
-                        }
-                        else if (color & 0x00_fFFFFF) != 0 {
-                            color_buff[y as usize * w + stripe as usize] = color as u32
+                            let d = (y) * 256 - h as i32 * 128 + sprite_height * 128; //256 and 128 factors to avoid floats
+                            let tex_y = ((d * texture_height as i32) / sprite_height) / 256;
+                            let tex_i = if portal_mapping {
+                                stripe as usize + y as usize * texture_width as usize
+                            }
+                            else {
+                                tex_x as usize + tex_y as usize * texture_width as usize
+                            };
+                            let tex_i = (tex_i * bytes_per_pixel) as usize;
+                            let tex_id = sprite[2] as usize;
+                            let color = textures[tex_id][tex_i] as u32 |
+                                ((textures[tex_id][tex_i + 1] as u32) << 8) |
+                                ((textures[tex_id][tex_i + 2] as u32) << 16);
+                            if rgba {
+                                let alpha = textures[tex_id][tex_i + 3] as u32;
+                                let tran = 0xff - alpha;
+                                let text = &textures[tex_id];
+                                let cbi = y as usize * w + stripe as usize;
+                                color_buff[cbi] = 
+                                    ((text[tex_i] as u32 & alpha) | (color_buff[cbi] & tran))
+                                    + (((((text[tex_i + 1] as u32) & alpha) << 8)) | ((color_buff[cbi]) & (tran << 8)))
+                                    + (((((text[tex_i + 2] as u32) & alpha ) << 16))| ((color_buff[cbi]) & (tran << 16)));
+                            }
+                            else if (color & 0x00_fFFFFF) != 0 {
+                                color_buff[y as usize * w + stripe as usize] = color as u32
+                            }
                         }
                     }
                 }
@@ -489,7 +492,10 @@ fn render_portals(sound_device: &rodio::Device, portals: &Vec<Vec<f32>>, portals
                     portals_textures[i][base8 + 3] = 0xff;
                 }
             }
-            if render_sprites(&portals, &portals_textures, portal_width as u32, portal_height as u32, color_buff, &depth_buff, window_width, window_height, *pos_x, *pos_y, dir_x, dir_y, plane_x, plane_y, true, true, t) {
+            let sprites_and_textures = vec![
+                (portals, &*portals_textures, portal_width as u32, portal_height as u32, true, true),
+            ];
+            if render_sprites(&sprites_and_textures, color_buff, &depth_buff, window_width, window_height, *pos_x, *pos_y, dir_x, dir_y, plane_x, plane_y, t) {
 
                 *pos_x = portals_dests[i][0];
                 *pos_y = portals_dests[i][1];
@@ -502,10 +508,13 @@ fn render_portals(sound_device: &rodio::Device, portals: &Vec<Vec<f32>>, portals
 fn render(textures: &Vec<Vec<u8>>, character_textures: &Vec<Vec<u8>>, goldcoin_textures: &Vec<Vec<u8>>,torch_textures: &Vec<Vec<u8>>, sprites: &Vec<Vec<f32>>, characters: &Vec<Vec<f32>>, gold_coins: &Vec<Vec<f32>>, torches: &Vec<Vec<f32>>, tex_width: u32, tex_height: u32, coin_width: u32, coin_height: u32, torch_width: u32, torch_height: u32, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, world_map: &Vec<Vec<u8>>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32, start_dist: f32, t: i32) {
     render_floor_ceiling(&textures, tex_width, tex_height, color_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y);
     render_walls(&textures, tex_width, tex_height, &world_map, color_buff, depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, start_dist);
-    render_sprites(&sprites, &textures, tex_width, tex_height, color_buff, &depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, false, false, t);
-    render_sprites(&characters, &character_textures, tex_width, tex_height, color_buff, &depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, false, false, t);
-    render_sprites(&gold_coins, &goldcoin_textures, coin_width, coin_height, color_buff, &depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true, false, t);
-    render_sprites(&torches, &torch_textures, torch_width, torch_height, color_buff, &depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true, false, t);
+    let sprites_and_textures = vec![
+        (sprites, textures, tex_width, tex_height, false, false),
+        (characters, character_textures, tex_width, tex_height, false, false),
+        (gold_coins, goldcoin_textures, coin_width, coin_height, true, false),
+        (torches, torch_textures, torch_width, torch_height, true, false),
+    ];
+    render_sprites(&sprites_and_textures, color_buff, &depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, t);
 }
 
 pub fn client(server_address: String, client_address: String, nickname: String) {
