@@ -124,6 +124,16 @@ pub fn server(address: String) {
             vec![10.5, 15.8,8.0],
             ];
 
+        let mut portals = vec![
+            vec![20.5, 10.1, 0.0],
+            vec![10.0, 10.0, 1.0],
+        ];
+
+        let mut portals_dests = vec![
+            vec![10.0, 10.0],
+            vec![20.5, 10.1],
+        ];
+
     let mut gold_coins = vec![
         random_position(&world_map)
     ];
@@ -182,7 +192,8 @@ pub fn server(address: String) {
                             ClientMessage::MessageHello(nickname) => {
                                 nicknames.insert(endpoint, nickname);
                                 points.insert(endpoint, 0);
-                                let (x, y) = random_position(&world_map);
+                                // let (x, y) = random_position(&world_map);
+                                let (x, y) = (20.5, 12.0);
                                 let map_message = ServerMessage::MessageTeleport(Position { x: x, y: y, dir_x: -1.0, dir_y: 0.0, speed: 0.0 });
                                 let message_ser = bincode::serialize(&map_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
@@ -197,6 +208,9 @@ pub fn server(address: String) {
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
                                 let textures_message = ServerMessage::MessageGoldCoins(gold_coins.clone());
                                 let message_ser = bincode::serialize(&textures_message).unwrap();
+                                packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
+                                let message = ServerMessage::MessagePortals(portals.clone(), portals_dests.clone());
+                                let message_ser = bincode::serialize(&message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
                                 let textures_message = ServerMessage::MessageText(String::from("Hello !"), Duration::from_secs(10));
                                 let message_ser = bincode::serialize(&textures_message).unwrap();
