@@ -259,6 +259,7 @@ fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32
           step_y = 1;
           side_dist_y = (map_y  as f32+ 1.0 - pos_y as f32) * delta_dist_y;
       }
+      let mut ray_out_of_map = false;
       //perform DDA
       while hit == 0
       {
@@ -277,10 +278,17 @@ fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32
           }
           if (side_dist_x * side_dist_x + side_dist_y * side_dist_y).sqrt() >= start_dist {
               //Check if ray has hit a wall
+              if map_x as usize >= world_map.len() || map_y as usize >= world_map[map_x as usize].len() {
+                  ray_out_of_map = true;
+                  break;
+              }
               if world_map[map_x as usize][map_y as usize] > 0 {
                   hit = 1;
               }
           }
+      }
+      if ray_out_of_map {
+          continue;
       }
       //Calculate distance projected on camera direction (Euclidean distance will give fisheye effect!)
       if side == 0 { 
@@ -614,19 +622,12 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
         ];
 
         let mut portals = vec![
-            vec![20.5, 10.1, 0.0]
         ];
 
         let mut portals_dests = vec![
-            vec![10.0, 10.0]
-        ];
-
-        let mut should_render_portals = vec![
-            (false, 0.0, 0.0, 0.0)
         ];
 
         let mut portals_textures = vec![
-            portal_color_buff_u8
         ];
 
         /* font stuff */
@@ -692,6 +693,14 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
                                             gold_coins.push(vec![gc.0, gc.1, 0.0]);
                                         }
                                     },
+                                    ServerMessage::MessagePortals(pt, ptdst) => {
+                                        portals = pt;
+                                        portals_dests = ptdst;
+                                        portals_textures = vec![];
+                                        for i in 0..portals.len() {
+                                            portals_textures.push(portal_color_buff_u8.clone());
+                                        }
+                                    }
                                     ServerMessage::MessagePositions(positions) => {
                                         character_positions = vec![];
                                         for position in positions {

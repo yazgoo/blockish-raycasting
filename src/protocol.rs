@@ -19,6 +19,7 @@ pub enum ServerMessage {
     MessageSprites(Vec<Vec<f32>>),
     MessageTexturesZip(String),
     MessageGoldCoins(Vec<(f32, f32)>),
+    MessagePortals(Vec<Vec<f32>>, Vec<Vec<f32>>),
     MessageText(String, Duration),
     MessageTeleport(Position),
 }
