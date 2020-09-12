@@ -32,6 +32,7 @@ fn rmcup() {
     flush_stdout();
 }
 
+
 fn render_floor_ceiling(textures: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32, color_buff: &mut Vec<u32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32) {
     for y in 0..h
     {
@@ -460,6 +461,36 @@ fn play_sound(sound_device: &rodio::Device, path: String) {
     rodio::play_raw(&sound_device, coin_sound_samples);
 }
 
+fn render_portals(sound_device: &rodio::Device, portals: &Vec<Vec<f32>>, portals_dests: &Vec<Vec<f32>>, portal_color_buff: &mut Vec<u32>, portal_depth_buff: &mut Vec<f32>, portal_width: usize, portal_height: usize, portals_textures: &mut Vec<Vec<u8>>, textures: &Vec<Vec<u8>>, character_textures: &Vec<Vec<u8>>, goldcoin_textures: &Vec<Vec<u8>>,torch_textures: &Vec<Vec<u8>>, sprites: &Vec<Vec<f32>>, characters: &Vec<Vec<f32>>, gold_coins: &Vec<Vec<f32>>, torches: &Vec<Vec<f32>>, tex_width: u32, tex_height: u32, coin_width: u32, coin_height: u32, torch_width: u32, torch_height: u32, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, world_map: &Vec<Vec<u8>>, window_width: usize, window_height: usize, pos_x: &mut f32, pos_y: &mut f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32, t: i32) {
+    for i in 0..portals.len() {
+        let dist_x = *pos_x - portals[i][0];
+        let dist_y = *pos_y - portals[i][1];
+        let dest_pos_x = portals_dests[i][0] + dist_x;
+        let dest_pos_y = portals_dests[i][1] + dist_y;
+        let start_dist = (dist_x * dist_x + dist_y * dist_y).sqrt();
+        let should_render_portal = start_dist < 7.0;
+        if should_render_portal {
+            render(&textures, &character_textures, &goldcoin_textures, &torch_textures, &sprites, &characters, &gold_coins, &torches, tex_width, tex_height, coin_width, coin_height, torch_width, torch_height, portal_color_buff, portal_depth_buff, &world_map, portal_width, portal_height, dest_pos_x, dest_pos_y, dir_x, dir_y, plane_x, plane_y, start_dist, t);
+            for y in 0..portal_height {
+                for x in 0..portal_width {
+                    let base32 = y * portal_width + x;
+                    let base8 = (y * portal_width + x) * 4;
+                    portals_textures[i][base8] = (portal_color_buff[base32] & 0xff) as u8;
+                    portals_textures[i][base8 + 1] = ((portal_color_buff[base32] >> 8) & 0xff) as u8;
+                    portals_textures[i][base8 + 2] = ((portal_color_buff[base32] >> 16) & 0xff) as u8;
+                    portals_textures[i][base8 + 3] = 0xff;
+                }
+            }
+            if render_sprites(&portals, &portals_textures, portal_width as u32, portal_height as u32, color_buff, &depth_buff, window_width, window_height, *pos_x, *pos_y, dir_x, dir_y, plane_x, plane_y, true, true, t) {
+
+                *pos_x = portals_dests[i][0];
+                *pos_y = portals_dests[i][1];
+                play_sound(&sound_device, String::from("sound/teleport.mp3"));
+            }
+        }
+    }
+}
+
 fn render(textures: &Vec<Vec<u8>>, character_textures: &Vec<Vec<u8>>, goldcoin_textures: &Vec<Vec<u8>>,torch_textures: &Vec<Vec<u8>>, sprites: &Vec<Vec<f32>>, characters: &Vec<Vec<f32>>, gold_coins: &Vec<Vec<f32>>, torches: &Vec<Vec<f32>>, tex_width: u32, tex_height: u32, coin_width: u32, coin_height: u32, torch_width: u32, torch_height: u32, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, world_map: &Vec<Vec<u8>>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32, start_dist: f32, t: i32) {
     render_floor_ceiling(&textures, tex_width, tex_height, color_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y);
     render_walls(&textures, tex_width, tex_height, &world_map, color_buff, depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, start_dist);
@@ -588,6 +619,10 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
 
         let mut portals_dests = vec![
             vec![10.0, 10.0]
+        ];
+
+        let mut should_render_portals = vec![
+            (false, 0.0, 0.0, 0.0)
         ];
 
         let mut portals_textures = vec![
@@ -728,42 +763,8 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
 
             let start_time = Instant::now();
 
-            let mut portals_to_render = vec![];
-
-            for i in 0..portals.len() {
-                let dist_x = pos_x - portals[i][0];
-                let dist_y = pos_y - portals[i][1];
-                let dest_pos_x = portals_dests[i][0] + dist_x;
-                let dest_pos_y = portals_dests[i][1] + dist_y;
-                let start_dist = (dist_x * dist_x + dist_y * dist_y).sqrt();
-                if start_dist < 7.0 {
-                    portals_to_render.push((i, start_dist, dest_pos_x, dest_pos_y));
-                }
-            }
-
-            for (i, start_dist, dest_pos_x, dest_pos_y) in &portals_to_render {
-                render(&textures, &character_textures, &goldcoin_textures, &torch_textures, &sprites, &characters, &gold_coins, &torches, texture_width, texture_height, coin_width, coin_height, torch_width, torch_height, &mut portal_color_buff, &mut portal_depth_buff, &world_map, portal_width, portal_height, *dest_pos_x, *dest_pos_y, dir_x, dir_y, plane_x, plane_y, *start_dist, t);
-                for y in 0..portal_height {
-                    for x in 0..portal_width {
-                        let base32 = y * portal_width + x;
-                        let base8 = (y * portal_width + x) * 4;
-                        portals_textures[0][base8] = (portal_color_buff[base32] & 0xff) as u8;
-                        portals_textures[0][base8 + 1] = ((portal_color_buff[base32] >> 8) & 0xff) as u8;
-                        portals_textures[0][base8 + 2] = ((portal_color_buff[base32] >> 16) & 0xff) as u8;
-                        portals_textures[0][base8 + 3] = 0xff;
-                    }
-                }
-            }
-
             render(&textures, &character_textures, &goldcoin_textures, &torch_textures, &sprites, &characters, &gold_coins, &torches, texture_width, texture_height, coin_width, coin_height, torch_width, torch_height, &mut color_buff, &mut depth_buff, &world_map, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, 0.0, t);
-            for (i, start_dist, dest_pos_x, dest_pos_y) in &portals_to_render {
-                if render_sprites(&portals, &portals_textures, portal_width as u32, portal_height as u32, &mut color_buff, &depth_buff, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, true, true, t)
-                {
-                    pos_x = portals_dests[*i][0];
-                    pos_y = portals_dests[*i][1];
-                    play_sound(&sound_device, String::from("sound/teleport.mp3"));
-                }
-            }
+            render_portals(&sound_device, &portals, &portals_dests, &mut portal_color_buff, &mut portal_depth_buff, portal_width, portal_height, &mut portals_textures, &textures, &character_textures, &goldcoin_textures, &torch_textures, &sprites, &characters, &gold_coins, &torches, texture_width, texture_height, coin_width, coin_height, torch_width, torch_height, &mut color_buff, &mut depth_buff, &world_map, portal_width, portal_height, &mut pos_x, &mut pos_y, dir_x, dir_y, plane_x, plane_y, t);
 
             for y in 0..text_height {
                 for x in 0..text_width {
