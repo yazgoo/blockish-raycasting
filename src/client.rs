@@ -103,19 +103,26 @@ fn render_floor_ceiling(textures: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32
 fn render_sprites(all_sprites_and_textures: &Vec<(&Vec<Vec<f32>>, &Vec<Vec<u8>>, u32, u32, bool, bool)>, color_buff: &mut Vec<u32>, depth_buff: &Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32, t: i32) -> bool {
     let mut rendering_occured = false;
     let mut portal_takes_full_screen = true;
-    for sprites_and_textures in all_sprites_and_textures {
-        let (sprites, textures, texture_width, texture_height, rgba, portal_mapping) =  *sprites_and_textures;
-        let bytes_per_pixel = if rgba { 4 } else { 3 };
-        let mut sorted_sprites = sprites.into_iter()
-            .map( |x| (x, ((pos_x - x[0]) * (pos_x - x[0]) + (pos_y - x[1]) * (pos_y - x[1]))))
-            .collect::<Vec<(&Vec<f32>, f32)>>();
+    // for sprites_and_textures in all_sprites_and_textures {
+        // let (sprites, textures, texture_width, texture_height, rgba, portal_mapping) =  *sprites_and_textures;
+    let mut sorted_sprites = all_sprites_and_textures.into_iter()
+        .map( |y| y.0.into_iter().map( |x| {
+            (x, ((pos_x - x[0]) * (pos_x - x[0]) + (pos_y - x[1]) * (pos_y - x[1])), y.1, y.2, y.3, y.4, y.5)
+        }
+        ).collect::<Vec<(&Vec<f32>, f32, &Vec<Vec<u8>>, u32, u32, bool, bool)>>()
+        )
+        .flatten().collect::<Vec<(&Vec<f32>, f32, &Vec<Vec<u8>>, u32, u32, bool, bool)>>();
         sorted_sprites.sort_by( |a, b| b.1.partial_cmp(&a.1).unwrap());
+        /*
         let sorted_sprites : Vec<&Vec<f32>> = sorted_sprites
             .into_iter()
             .map(|x| x.0)
             .collect();
+        */
         //sqrt not taken, unneeded
-        for sprite in sorted_sprites {
+        for sprite_info in sorted_sprites {
+            let (sprite, _, textures, texture_width, texture_height, rgba, portal_mapping) =  sprite_info;
+            let bytes_per_pixel = if rgba { 4 } else { 3 };
             let sprite_x = sprite[0] - pos_x;
             let sprite_y = sprite[1] - pos_y;
 
@@ -209,7 +216,7 @@ fn render_sprites(all_sprites_and_textures: &Vec<(&Vec<Vec<f32>>, &Vec<Vec<u8>>,
                 }
             }
         }
-    }
+    //}
     rendering_occured && portal_takes_full_screen
 }
 
