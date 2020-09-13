@@ -100,18 +100,22 @@ fn render_floor_ceiling(textures: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32
     }
 }
 
-fn render_sprites(all_sprites_and_textures: &Vec<(&Vec<Vec<f32>>, &Vec<Vec<u8>>, u32, u32, bool, bool)>, color_buff: &mut Vec<u32>, depth_buff: &Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32, t: i32) -> bool {
-    let mut rendering_occured = false;
-    let mut portal_takes_full_screen = true;
+fn render_sprites(all_sprites_and_textures: &Vec<(&Vec<Vec<f32>>, &Vec<Vec<u8>>, u32, u32, bool, bool)>, color_buff: &mut Vec<u32>, depth_buff: &Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32, t: i32) -> Option<usize> {
+    let mut matching_portal_index = None;
     // for sprites_and_textures in all_sprites_and_textures {
         // let (sprites, textures, texture_width, texture_height, rgba, portal_mapping) =  *sprites_and_textures;
     let mut sorted_sprites = all_sprites_and_textures.into_iter()
-        .map( |y| y.0.into_iter().map( |x| {
-            (x, ((pos_x - x[0]) * (pos_x - x[0]) + (pos_y - x[1]) * (pos_y - x[1])), y.1, y.2, y.3, y.4, y.5)
+        .map( |y| {
+            let mut i = 0;
+            y.0.into_iter().map( |x| {
+                let res = (x, ((pos_x - x[0]) * (pos_x - x[0]) + (pos_y - x[1]) * (pos_y - x[1])), y.1, y.2, y.3, y.4, y.5, i);
+                i += 1;
+                res
+            }
+            ).collect::<Vec<(&Vec<f32>, f32, &Vec<Vec<u8>>, u32, u32, bool, bool, usize)>>()
         }
-        ).collect::<Vec<(&Vec<f32>, f32, &Vec<Vec<u8>>, u32, u32, bool, bool)>>()
         )
-        .flatten().collect::<Vec<(&Vec<f32>, f32, &Vec<Vec<u8>>, u32, u32, bool, bool)>>();
+        .flatten().collect::<Vec<(&Vec<f32>, f32, &Vec<Vec<u8>>, u32, u32, bool, bool, usize)>>();
         sorted_sprites.sort_by( |a, b| b.1.partial_cmp(&a.1).unwrap());
         /*
         let sorted_sprites : Vec<&Vec<f32>> = sorted_sprites
@@ -121,7 +125,9 @@ fn render_sprites(all_sprites_and_textures: &Vec<(&Vec<Vec<f32>>, &Vec<Vec<u8>>,
         */
         //sqrt not taken, unneeded
         for sprite_info in sorted_sprites {
-            let (sprite, _, textures, texture_width, texture_height, rgba, portal_mapping) =  sprite_info;
+            let mut rendering_occured = false;
+            let mut portal_takes_full_screen = true;
+            let (sprite, _, textures, texture_width, texture_height, rgba, portal_mapping, sprite_index) =  sprite_info;
             let bytes_per_pixel = if rgba { 4 } else { 3 };
             let sprite_x = sprite[0] - pos_x;
             let sprite_y = sprite[1] - pos_y;
@@ -215,9 +221,11 @@ fn render_sprites(all_sprites_and_textures: &Vec<(&Vec<Vec<f32>>, &Vec<Vec<u8>>,
                     }
                 }
             }
+            if portal_mapping && rendering_occured && portal_takes_full_screen {
+                matching_portal_index = Some(sprite_index);
+            }
         }
-    //}
-    rendering_occured && portal_takes_full_screen
+        matching_portal_index
 }
 
 fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32, world_map: &Vec<Vec<u8>>, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32, start_dist: f32) {
@@ -509,10 +517,10 @@ fn render_portals(sound_device: &rodio::Device, portals: &Vec<Vec<f32>>, portals
     }
 }
 
-fn render(textures: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32, sprites_and_textures: &Vec<(&Vec<Vec<f32>>, &Vec<Vec<u8>>, u32, u32, bool, bool)>, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, world_map: &Vec<Vec<u8>>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32, start_dist: f32, t: i32) {
+fn render(textures: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32, sprites_and_textures: &Vec<(&Vec<Vec<f32>>, &Vec<Vec<u8>>, u32, u32, bool, bool)>, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, world_map: &Vec<Vec<u8>>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32, start_dist: f32, t: i32) -> Option<usize> {
     render_floor_ceiling(&textures, tex_width, tex_height, color_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y);
     render_walls(&textures, tex_width, tex_height, &world_map, color_buff, depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, start_dist);
-    render_sprites(&sprites_and_textures, color_buff, &depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, t);
+    render_sprites(&sprites_and_textures, color_buff, &depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, t)
 }
 
 pub fn client(server_address: String, client_address: String, nickname: String) {
@@ -780,14 +788,6 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
             let start_time = Instant::now();
 
 
-            /*
-    if render_sprites(&sprites_and_textures, color_buff, &depth_buff, window_width, window_height, *pos_x, *pos_y, dir_x, dir_y, plane_x, plane_y, t) {
-
-        *pos_x = portals_dests[i][0];
-        *pos_y = portals_dests[i][1];
-        play_sound(&sound_device, String::from("sound/teleport.mp3"));
-    }
-        */
             render_portals(&sound_device, &portals, &portals_dests, &mut portal_color_buff, &mut portal_depth_buff, portal_width, portal_height, &mut portals_textures, &textures, &character_textures, &goldcoin_textures, &torch_textures, &sprites, &characters, &gold_coins, &torches, texture_width, texture_height, coin_width, coin_height, torch_width, torch_height, &mut color_buff, &mut depth_buff, &world_map, portal_width, portal_height, &mut pos_x, &mut pos_y, dir_x, dir_y, plane_x, plane_y, t);
             let sprites_and_textures = vec![
                 (&sprites, &textures, texture_width, texture_height, false, false),
@@ -796,7 +796,11 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
                 (&torches, &torch_textures, torch_width, torch_height, true, false),
                 (&portals, &portals_textures, portal_width as u32, portal_height as u32, true, true),
             ];
-            render(&textures, texture_width, texture_height, &sprites_and_textures, &mut color_buff, &mut depth_buff, &world_map, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, 0.0, t);
+            if let Some(portal_index) = render(&textures, texture_width, texture_height, &sprites_and_textures, &mut color_buff, &mut depth_buff, &world_map, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, 0.0, t) {
+                pos_x = portals_dests[portal_index][0];
+                pos_y = portals_dests[portal_index][1];
+                play_sound(&sound_device, String::from("sound/teleport.mp3"));
+            }
 
             for y in 0..text_height {
                 for x in 0..text_width {
