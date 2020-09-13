@@ -1,0 +1,224 @@
+<style>
+#spritesLayer {
+  position: relative; z-index: 1; background-color: blue; width: 580px; height: 600px; opacity: 0.5;
+}
+#mapLayer {
+  margin-top: -600px; width: 620px;  position: relative; z-index: 2; background-color: black; padding: 1px;
+}
+</style>
+<div id=content>
+</div>
+<script>
+var imagesCount = 11;
+var defaultImage = "ground.png";
+var width = 24;
+var height = 24;
+last_x = 0;
+last_y = 0;
+
+function border(color) {
+  return "border: 2px solid " + color + ";";
+}
+
+function changeDefault(item, imgPath) {
+  defaultImage = imgPath;
+  var k;
+  for(k = 0; k < imagesCount; k+=1) {
+    document.getElementById("image_" + k).style = border("transparent");
+  }
+  item.style = border("black");
+}
+
+function i_to_src(i) {
+  if (i == 0) {
+    return "ground.png";
+  }
+  else {
+    return "pics/" + (i - 1) + ".png";
+  }
+}
+
+function src_to_i(src) {
+  img = src.split("/").slice(-1)[0].replace(".png", "");
+  if (img == "ground" ) {
+    return 0;
+  }
+  else {
+    return parseInt(img) + 1;
+  }
+}
+
+function updateOutput() {
+  txt = "";
+  for(y = 0; y < height; y+=1) {
+    txt += "vec![";
+    var x;
+    for(x = 0; x < width; x+=1) {
+      cell = document.getElementById(y + "_" + x);
+      txt += src_to_i(cell.src) + ",";
+    }
+    txt += "],\n";
+    
+  }
+  document.getElementById("text").innerHTML = txt;
+}
+
+function parseSprites() {
+  var textarea = document.getElementById("text_sprites")
+  var lines = textarea.value.split("\n");
+  var y = 0;
+  for(k in lines) {
+    if(lines[k].includes("vec")) {
+      var cols = lines[y].replace("vec![", "").replace(",],", "").replace("],", "").split(",");
+      for(x in cols) {
+        defaultImage = i_to_src(parseInt(cols[x]));
+        var id = y + "_" + x
+        changeImage(y, x, document.getElementById(id));
+      }
+      y += 1;
+    }
+  }
+
+}
+
+function parseText() {
+  var textarea = document.getElementById("text")
+  var lines = textarea.value.split("\n");
+  var y = 0;
+  for(k in lines) {
+    if(lines[k].includes("vec")) {
+      var cols = lines[y].replace("vec![", "").replace(",],", "").replace("],", "").replace(/ /g,'').split(",");
+      for(x in cols) {
+        defaultImage = i_to_src(parseInt(cols[x]));
+        var id = y + "_" + x
+        changeImage(y, x, document.getElementById(id));
+      }
+      y += 1;
+    }
+  }
+}
+
+function spriteImageHtml(y, x, img) {
+  return "<img style='position: absolute; top:"+x+"px;left:"+y+"px;' src=" + img + " width=10 height=10 onclick='imgClick(this)'></img>";
+}
+
+function parseSpritesText() {
+  var textarea = document.getElementById("text_sprites")
+  var lines = textarea.value.split("\n");
+  var y = 0;
+  var html = ""
+  for(k in lines) {
+    if(lines[k].includes("vec")) {
+      var cols = lines[k].replace("vec![", "").replace(",],", "").replace("],", "").replace(/ /g,'').split(",");
+      defaultImage = i_to_src(parseInt(cols[x]));
+      html += spriteImageHtml(coordinateToPx(cols[1]), coordinateToPx(cols[0]), i_to_src(parseInt(cols[2]) + 1)); 
+      html += "\n"
+    }
+  }
+  document.getElementById("spritesLayer").innerHTML = html;
+  
+}
+
+function changeImage(y, x, what) {
+  what.src = defaultImage;
+  if(document.getElementById("line").checked) {
+    var _x = x;
+    var _y = y;
+    delta_x = last_x == x ? 0 : (last_x > x ? 1 : -1);
+    delta_y = last_y == y ? 0 : (last_y > y ? 1 : -1);
+    if(delta_x == 0) {
+      for(; _y != last_y; _y += delta_y) {
+        document.getElementById(_y + "_" + _x).src = defaultImage;
+      }
+    }
+    if(delta_y == 0) {
+      for(; _x != last_x; _x += delta_x) {
+        document.getElementById(_y + "_" + _x).src = defaultImage;
+      }
+    }
+  }
+  updateOutput();
+  last_x = x;
+  last_y = y;
+}
+
+function getSelectorHtml(i, directory) {
+  imgpath = directory + i + ".png";
+  return ("<img src=" + imgpath + " width=42 height=42 style=\""
+    + border("transparent") + "\" id=image_" + i
+    + " onclick='changeDefault(this,\""+ imgpath + "\")'/>");
+}
+
+function imgClick(self) {
+  if (defaultImage == "ground.png") {
+    document.getElementById("spritesLayer").removeChild(self);
+  }
+}
+
+function pxToCoordinate(px) {
+  return  (px * 1.0 / (24.0 * 24)) * 24
+}
+
+function coordinateToPx(c) {
+  return  (c * 1.0 / (24.0)) * (24 * 24)
+}
+
+function updateSpritesOutput() {
+  var images = document.getElementById("spritesLayer").children;
+  var txt = "";
+  for(i in images) {
+    var image = images[i];
+    if(image.style != undefined) {
+      txt += "vec![" + pxToCoordinate(parseInt(image.style.left)) + "," + pxToCoordinate(parseInt(image.style.top)) + "," + (src_to_i(image.src) - 1) + ".0]\n";
+    }
+  }
+  console.log(txt);
+  document.getElementById("text_sprites").value = txt;
+}
+
+function clickSprites(parent) {
+  var event = window.event
+  document.getElementById("mapLayer").style.zIndex = 1;
+  document.getElementById("spritesLayer").style.zIndex = 9;
+
+  if (defaultImage != "ground.png") {
+    var x = event.offsetX;
+    var y = event.offsetY;
+    if (y < 500) {
+      var spriteLayer = document.getElementById("spritesLayer");
+      var html = spriteImageHtml(x, y, defaultImage);
+      spriteLayer.innerHTML += html;
+    }
+  }
+  updateSpritesOutput();
+}
+
+function clickMap() {
+  document.getElementById("mapLayer").style.zIndex = 9;
+  document.getElementById("spritesLayer").style.zIndex = 1;
+}
+
+html = "";
+html += getSelectorHtml("ground", "");
+for(i = 0; i < imagesCount; i+=1) {
+    html+=getSelectorHtml(i, "pics/");
+}
+html += "line: <input type=checkbox id=line>"
+html += "sprites: <input type=checkbox id=sprites><hr/>"
+html += "<div>"
+html+=("<textarea id=text rows=25 cols=60 onchange='parseText()'></textarea>")
+html+=("<textarea id=text_sprites rows=25 cols=60 onchange='parseSpritesText()'></textarea>\n <hr/> ");
+html += "<div id=spritesLayer onclick='clickSprites(this)'></div>";
+html+=("<div id=mapLayer style='' onclick='clickMap()'>");
+var y;
+for(y = 0; y < height; y+=1) {
+  var x;
+  for(x = 0; x < width; x+=1) {
+    html+=("<img id="+ y + "_"+ x +" src=ground.png width=24 height=24 onclick='changeImage(" + y + ", " + x + ", this)'/>");
+  }
+  html+=("</br>\n");
+}
+  html+=("</div>\n");
+html += "<div>"
+document.getElementById("content").innerHTML = html;
+</script>
