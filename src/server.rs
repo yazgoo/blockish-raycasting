@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::Sender;
 use std::thread;
 use rand::prelude::*;
+mod levels;
 
 fn check_gold_coins(coins_found: u32, world_map: &Vec<Vec<u8>>, packet_sender: &Sender<Packet>, gold_coins: &mut Vec<(f32, f32)>, positions : &HashMap<SocketAddr, Position>, nicknames: &HashMap<SocketAddr, String>, points: &mut HashMap<SocketAddr, u8>) -> u32 {
     let mut new_coins_found = coins_found;
@@ -67,77 +68,24 @@ fn random_position(world_map: &Vec<Vec<u8>>) -> (f32, f32) {
 }
 
 
+fn random_level() -> (String, Vec<Vec<u8>>,Vec<Vec<f32>>,Vec<Vec<f32>>,Vec<Vec<f32>>) {
+    let mut rng = rand::thread_rng();
+    match rng.gen_range(0, 3) {
+        0 => levels::spyral(),
+        1 => levels::rat_race(),
+        2 => levels::trapped(),
+        _ => levels::first(),
+    }
+}
+
 pub fn server(address: String) {
     let mut coins_found = 0;
-    let world_map : Vec<Vec<u8>> =
-        vec![
-        vec![8,8,8,8,8,8,8,8,8,8,8,4,4,6,4,4,6,4,6,4,4,4,6,4],
-        vec![8,0,0,0,0,0,0,0,0,0,8,4,0,0,0,0,0,0,0,0,0,0,0,4],
-        vec![8,0,3,3,0,0,0,0,0,8,8,4,0,0,0,0,0,0,0,0,0,0,0,6],
-        vec![8,0,0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,6],
-        vec![8,0,3,3,0,0,0,0,0,8,8,4,0,0,0,0,0,0,0,0,0,0,0,4],
-        vec![8,0,0,0,0,0,0,0,0,0,8,4,0,0,0,0,0,6,6,6,0,6,4,6],
-        vec![8,8,8,8,0,8,8,8,8,8,8,4,4,4,4,4,4,6,0,0,0,0,0,6],
-        vec![7,7,7,7,0,7,7,7,7,0,8,0,8,0,8,0,8,4,0,4,0,6,0,6],
-        vec![7,7,0,0,0,0,0,0,7,8,0,8,0,8,0,8,8,6,0,0,0,0,0,6],
-        vec![7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,8,6,0,0,0,0,0,4],
-        vec![7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,8,6,0,6,0,6,0,6],
-        vec![7,7,0,0,0,0,0,0,7,8,0,8,0,8,0,8,8,6,4,6,0,6,6,6],
-        vec![7,7,7,7,0,7,7,7,7,8,8,4,0,6,8,4,8,3,3,3,0,3,3,3],
-        vec![2,2,2,2,0,2,2,2,2,4,6,4,0,0,6,0,6,3,0,0,0,0,0,3],
-        vec![2,2,0,0,0,0,0,2,2,4,0,0,0,0,0,0,4,3,0,0,0,0,0,3],
-        vec![2,0,0,0,0,0,0,0,2,4,0,0,0,0,0,0,4,3,0,0,0,0,0,3],
-        vec![1,0,0,0,0,0,0,0,1,4,4,4,4,4,6,0,6,3,3,0,0,0,3,3],
-        vec![2,0,0,0,0,0,0,0,2,2,2,1,2,2,2,6,6,0,0,5,0,5,5,5],
-        vec![2,2,0,0,0,0,0,2,2,2,0,0,0,2,2,5,5,0,5,0,0,0,5,5],
-        vec![2,0,0,0,0,0,0,0,2,0,0,0,0,0,2,5,0,5,0,5,0,5,0,5],
-        vec![1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5],
-        vec![2,0,0,0,0,0,0,0,2,0,0,0,0,0,2,5,0,5,0,5,0,5,0,5],
-        vec![2,2,0,0,0,0,0,2,2,2,0,0,0,2,2,5,5,5,5,0,0,0,5,5],
-        vec![2,2,2,2,1,2,2,2,2,2,2,1,2,2,2,5,5,5,5,5,5,5,5,5]
-            ];
-        let sprites = 
-            vec![
-            vec![20.5, 11.5, 10.0], //green light in front of playerstart
-            //green lights in every room
-            vec![18.5,4.5, 10.0],
-            vec![10.0,4.5, 10.0],
-            vec![10.0,12.5,10.0],
-            vec![3.5, 6.5, 10.0],
-            vec![3.5, 20.5,10.0],
-            vec![3.5, 14.5,10.0],
-            vec![14.5,20.5,10.0],
-
-            //row of pillars in front of wall: fisheye test
-            vec![18.5, 10.5, 9.0],
-            vec![18.5, 11.5, 9.0],
-            vec![18.5, 12.5, 9.0],
-
-            //some barrels around the map
-            vec![21.5, 1.5, 8.0],
-            vec![15.5, 1.5, 8.0],
-            vec![16.0, 1.8, 8.0],
-            vec![16.2, 1.2, 8.0],
-            vec![3.5,  2.5, 8.0],
-            vec![9.5, 15.5, 8.0],
-            vec![10.0, 15.1,8.0],
-            vec![10.5, 15.8,8.0],
-            ];
-
-        let mut portals = vec![
-            vec![20.5, 10.1, 0.0],
-            vec![10.0, 10.0, 1.0],
-        ];
-
-        let mut portals_dests = vec![
-            vec![10.0, 10.0],
-            vec![20.5, 10.1],
-        ];
+    let (mut textures_url, mut world_map, 
+        mut sprites, mut portals, mut portals_dests) = random_level();
 
     let mut gold_coins = vec![
         random_position(&world_map)
     ];
-    let textures_url = "https://srv-file10.gofile.io/download/GrF7ZN/wolfenstein_textures.zip";
     // Creates the socket
     let mut socket = Socket::bind(address).unwrap();
     let packet_sender = socket.get_packet_sender();
@@ -192,8 +140,7 @@ pub fn server(address: String) {
                             ClientMessage::MessageHello(nickname) => {
                                 nicknames.insert(endpoint, nickname);
                                 points.insert(endpoint, 0);
-                                // let (x, y) = random_position(&world_map);
-                                let (x, y) = (20.5, 12.0);
+                                let (x, y) = random_position(&world_map);
                                 let map_message = ServerMessage::MessageTeleport(Position { x: x, y: y, dir_x: -1.0, dir_y: 0.0, speed: 0.0 });
                                 let message_ser = bincode::serialize(&map_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
@@ -203,7 +150,7 @@ pub fn server(address: String) {
                                 let sprites_message = ServerMessage::MessageSprites(sprites.clone());
                                 let message_ser = bincode::serialize(&sprites_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
-                                let textures_message = ServerMessage::MessageTexturesZip(String::from(textures_url));
+                                let textures_message = ServerMessage::MessageTexturesZip(textures_url.clone());
                                 let message_ser = bincode::serialize(&textures_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
                                 let textures_message = ServerMessage::MessageGoldCoins(gold_coins.clone());
