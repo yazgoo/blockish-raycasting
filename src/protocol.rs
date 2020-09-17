@@ -16,6 +16,7 @@ pub struct Position {
 pub enum ServerMessage {
     MessagePositions(HashMap<SocketAddr, Position>),
     MessageWorldMap(Vec<Vec<u8>>),
+    MessageWorldLayer(Vec<Vec<u8>>),
     MessageSprites(Vec<Vec<f32>>),
     MessageTexturesZip(String),
     MessageGoldCoins(Vec<(f32, f32)>),

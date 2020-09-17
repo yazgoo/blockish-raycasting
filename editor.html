@@ -9,7 +9,7 @@
 <div id=content>
 </div>
 <script>
-var imagesCount = 11;
+var imagesCount = 16;
 var defaultImage = "ground.png";
 var width = 24;
 var height = 24;
@@ -34,7 +34,7 @@ function i_to_src(i) {
     return "ground.png";
   }
   else {
-    return "pics/" + (i - 1) + ".png";
+    return document.getElementById('texture_set').value + "/pics/" + (i - 1) + ".png";
   }
 }
 
@@ -60,7 +60,7 @@ function updateOutput() {
     txt += "],\n";
     
   }
-  document.getElementById("text").innerHTML = txt;
+  document.getElementById("text").value = txt;
 }
 
 function parseSprites() {
@@ -198,13 +198,29 @@ function clickMap() {
   document.getElementById("spritesLayer").style.zIndex = 1;
 }
 
-html = "";
-html += getSelectorHtml("ground", "");
-for(i = 0; i < imagesCount; i+=1) {
-    html+=getSelectorHtml(i, "pics/");
+function getTexturesHtml(dir) {
+  html = ""
+    html += getSelectorHtml("ground", "");
+  for(i = 0; i < imagesCount; i+=1) {
+    html+=getSelectorHtml(i, dir + "/pics/");
+  }
+  return html;
 }
+
+function changeTextures(self) {
+document.getElementById('textures').innerHTML = getTexturesHtml(self.value);
+  
+}
+
+html = "<select id=texture_set onchange=changeTextures(this)>";
+html += "<option value=wolfensetin>wolfensetin</option>";
+html += "<option value=metro>metro</option>";
+html += "</select>";
+html += "<div id='textures'>";
+html += getTexturesHtml("wolfensetin")
+html += "</div>";
 html += "line: <input type=checkbox id=line>"
-html += "sprites: <input type=checkbox id=sprites><hr/>"
+html += "<hr/>"
 html += "<div>"
 html+=("<textarea id=text rows=25 cols=60 onchange='parseText()'></textarea>")
 html+=("<textarea id=text_sprites rows=25 cols=60 onchange='parseSpritesText()'></textarea>\n <hr/> ");
