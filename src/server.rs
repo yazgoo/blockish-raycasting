@@ -61,14 +61,14 @@ fn random_position(world_map: &Vec<Vec<u8>>) -> (f32, f32) {
         let x = rng.gen_range(0, 23);
         if world_map[x][y] == 0 {
             let coin_position = (x as f32 + 0.5, y as f32 + 0.5);
-            println!("coin position{:?}", coin_position);
             return coin_position;
         }
     }
 }
 
 
-fn random_level() -> (String, Vec<Vec<u8>>,Vec<Vec<f32>>,Vec<Vec<f32>>,Vec<Vec<f32>>) {
+fn random_level() -> (String, Vec<Vec<u8>>, Vec<Vec<u8>>,Vec<Vec<f32>>,Vec<Vec<f32>>,Vec<Vec<f32>>) {
+    /*
     let mut rng = rand::thread_rng();
     match rng.gen_range(0, 3) {
         0 => levels::spyral(),
@@ -76,11 +76,13 @@ fn random_level() -> (String, Vec<Vec<u8>>,Vec<Vec<f32>>,Vec<Vec<f32>>,Vec<Vec<f
         2 => levels::trapped(),
         _ => levels::first(),
     }
+    */
+    levels::metro()
 }
 
-pub fn server(address: String) {
+pub fn server(address: String, silent: bool) {
     let mut coins_found = 0;
-    let (mut textures_url, mut world_map, 
+    let (mut textures_url, mut world_map, mut world_layer,
         mut sprites, mut portals, mut portals_dests) = random_level();
 
     let mut gold_coins = vec![
@@ -115,7 +117,9 @@ pub fn server(address: String) {
                                 positions.insert(endpoint, pos);
 
                                 let now = Instant::now();
-                                println!("positions {:?}", positions);
+                                if !silent { 
+                                    println!("positions {:?}", positions);
+                                }
                                 let mut to_remove = vec![];
                                 for (key, _) in &positions {
                                     if now - last_seen[key] > Duration::from_secs(20) {
@@ -145,6 +149,9 @@ pub fn server(address: String) {
                                 let message_ser = bincode::serialize(&map_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
                                 let map_message = ServerMessage::MessageWorldMap(world_map.clone());
+                                let message_ser = bincode::serialize(&map_message).unwrap();
+                                packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
+                                let map_message = ServerMessage::MessageWorldLayer(world_layer.clone());
                                 let message_ser = bincode::serialize(&map_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
                                 let sprites_message = ServerMessage::MessageSprites(sprites.clone());

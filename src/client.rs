@@ -10,12 +10,13 @@ use pathfinder_geometry::vector::{Vector2F, Vector2I};
 use laminar::{Socket, SocketEvent, Packet};
 use std::time::{Duration, Instant};
 use std::thread;
-use std::fs::File;
+use std::fs::{File, metadata};
 use std::io::BufReader;
 use rodio::Source;
 use std::collections::HashMap;
 use std::io;
 use std::io::Write;
+use bytes::Bytes;
 
 fn flush_stdout() {
     let _ = io::stdout().flush().unwrap();
@@ -228,7 +229,7 @@ fn render_sprites(all_sprites_and_textures: &Vec<(&Vec<Vec<f32>>, &Vec<Vec<u8>>,
         matching_portal_index
 }
 
-fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32, world_map: &Vec<Vec<u8>>, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32, start_dist: f32) {
+fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32, world_map: &Vec<Vec<u8>>, world_layer: &Vec<Vec<u8>>, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x: f32, dir_y: f32, plane_x: f32, plane_y: f32, start_dist: f32) {
 
 
   for x in 0..w
@@ -294,7 +295,9 @@ fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32
               map_y += step_y;
               side = 1;
           }
-          if (side_dist_x * side_dist_x + side_dist_y * side_dist_y).sqrt() >= start_dist {
+          let dx = map_x as f32 - pos_x;
+          let dy = map_y as f32 - pos_y;
+          if (dx * dx + dy * dy).sqrt() >= start_dist {
               //Check if ray has hit a wall
               if map_x as usize >= world_map.len() || map_y as usize >= world_map[map_x as usize].len() {
                   ray_out_of_map = true;
@@ -333,6 +336,7 @@ fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32
       //choose wall color
       
       let tex_id = world_map[map_x as usize][map_y as usize] as usize;
+      let tex_id_layer = world_layer[map_x as usize][map_y as usize] as usize;
 
       let mut wall_x; //where exactly the wall was hit
       if side == 0 { 
@@ -356,9 +360,24 @@ fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32
           let tex_i = tex_x as usize + tex_y as usize * texture_width as usize;
           let tex_i = (tex_i * 3) as usize;
           let tex_id = tex_id - 1;
-          color_buff[y as usize * w + x as usize] = textures[tex_id][tex_i] as u32 |
+          let color_layer = if tex_id_layer != 0 {
+              let tex_id_layer = tex_id_layer - 1;
+              textures[tex_id_layer][tex_i] as u32 |
+                  ((textures[tex_id_layer][tex_i + 1] as u32) << 8) |
+                  ((textures[tex_id_layer][tex_i + 2] as u32) << 16)
+          } else {
+              0
+          };
+          let color = if color_layer == 0 {
+              textures[tex_id][tex_i] as u32 |
               ((textures[tex_id][tex_i + 1] as u32) << 8) |
-              ((textures[tex_id][tex_i + 2] as u32) << 16);
+              ((textures[tex_id][tex_i + 2] as u32) << 16)
+          } else {
+              color_layer
+          };
+          if (color & 0x00_fFFFFF) != 0 {
+              color_buff[y as usize * w + x as usize] = color;
+          }
       }
       depth_buff[x as usize] = perp_wall_dist;
   }
@@ -435,8 +454,7 @@ fn move_player(option_event: Option<crossterm_input::InputEvent>,world_map: &Vec
         res
 }
 
-
-fn load_textures(url: String) -> Vec<Vec<u8>> {
+fn load_texture_from_http_wip(url: String) -> Vec<Vec<u8>> {
     let texture_size = 64;
     let resp = reqwest::blocking::get(&url).unwrap().bytes().unwrap();
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(resp)).unwrap();
@@ -455,6 +473,43 @@ fn load_textures(url: String) -> Vec<Vec<u8>> {
     let mut v: Vec<_> = textures.into_iter().collect();
     v.sort_by(|x,y| x.0.cmp(&y.0));
     v.into_iter().map(|x| x.1).collect()
+        /*
+    let mut file = BufReader::new(File::open(&url).unwrap());
+    zip::ZipArchive::new(file).unwrap()
+        */
+}
+
+fn load_texture_from_local_file(url: String) -> Vec<Vec<u8>> {
+    let texture_size = 64;
+    let mut file = File::open(&url).unwrap();
+    let mut archive = zip::ZipArchive::new(file).unwrap();
+    let mut textures = HashMap::new();
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        if !(&*file.name()).ends_with('/') {
+            let mut bytes = vec![0; file.size() as usize];
+            file.read(&mut bytes).unwrap();
+            let someindex = scan_fmt_some!(file.name(), "pics/{d}.png", usize);
+            let index = someindex.unwrap();
+            textures.insert(index,
+                image::load(std::io::Cursor::new(bytes),  image::ImageFormat::PNG).unwrap().resize(texture_size, texture_size, FilterType::Nearest).to_rgb().into_raw());
+        }
+    }
+    let mut v: Vec<_> = textures.into_iter().collect();
+    v.sort_by(|x,y| x.0.cmp(&y.0));
+    v.into_iter().map(|x| x.1).collect()
+        /*
+        */
+}
+
+
+fn load_textures(url: String) -> Vec<Vec<u8>> {
+    if url.starts_with("http") {
+        load_texture_from_http_wip(url)
+    }
+    else {
+        load_texture_from_local_file(url)
+    }
 }
 
 fn generate_text(text: String, text_width: i32, text_height: i32) -> Vec<u32> {
@@ -487,7 +542,7 @@ fn play_sound(sound_device: &rodio::Device, path: String) {
     rodio::play_raw(&sound_device, coin_sound_samples);
 }
 
-fn render_portals(sound_device: &rodio::Device, portals: &Vec<Vec<f32>>, portals_dests: &Vec<Vec<f32>>, portal_color_buff: &mut Vec<u32>, portal_depth_buff: &mut Vec<f32>, portal_width: usize, portal_height: usize, portals_textures: &mut Vec<Vec<u8>>, textures: &Vec<Vec<u8>>, character_textures: &Vec<Vec<u8>>, goldcoin_textures: &Vec<Vec<u8>>,torch_textures: &Vec<Vec<u8>>, sprites: &Vec<Vec<f32>>, characters: &Vec<Vec<f32>>, gold_coins: &Vec<Vec<f32>>, torches: &Vec<Vec<f32>>, tex_width: u32, tex_height: u32, coin_width: u32, coin_height: u32, torch_width: u32, torch_height: u32, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, world_map: &Vec<Vec<u8>>, window_width: usize, window_height: usize, pos_x: &mut f32, pos_y: &mut f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32, t: i32) {
+fn render_portals(sound_device: &rodio::Device, portals: &Vec<Vec<f32>>, portals_dests: &Vec<Vec<f32>>, portal_color_buff: &mut Vec<u32>, portal_depth_buff: &mut Vec<f32>, portal_width: usize, portal_height: usize, portals_textures: &mut Vec<Vec<u8>>, textures: &Vec<Vec<u8>>, character_textures: &Vec<Vec<u8>>, goldcoin_textures: &Vec<Vec<u8>>,torch_textures: &Vec<Vec<u8>>, sprites: &Vec<Vec<f32>>, characters: &Vec<Vec<f32>>, gold_coins: &Vec<Vec<f32>>, torches: &Vec<Vec<f32>>, tex_width: u32, tex_height: u32, coin_width: u32, coin_height: u32, torch_width: u32, torch_height: u32, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, world_map: &Vec<Vec<u8>>, world_layer: &Vec<Vec<u8>>, window_width: usize, window_height: usize, pos_x: &mut f32, pos_y: &mut f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32, t: i32) {
     for i in 0..portals.len() {
         let dist_x = *pos_x - portals[i][0];
         let dist_y = *pos_y - portals[i][1];
@@ -502,7 +557,7 @@ fn render_portals(sound_device: &rodio::Device, portals: &Vec<Vec<f32>>, portals
                 (gold_coins, goldcoin_textures, coin_width, coin_height, true, false),
                 (torches, torch_textures, torch_width, torch_height, true, false),
             ];
-            render(&textures, tex_width, tex_height, &sprites_and_textures, portal_color_buff, portal_depth_buff, &world_map, portal_width, portal_height, dest_pos_x, dest_pos_y, dir_x, dir_y, plane_x, plane_y, start_dist, t);
+            render(&textures, tex_width, tex_height, &sprites_and_textures, portal_color_buff, portal_depth_buff, &world_map, &world_layer, portal_width, portal_height, dest_pos_x, dest_pos_y, dir_x, dir_y, plane_x, plane_y, start_dist, t);
             for y in 0..portal_height {
                 for x in 0..portal_width {
                     let base32 = y * portal_width + x;
@@ -517,9 +572,9 @@ fn render_portals(sound_device: &rodio::Device, portals: &Vec<Vec<f32>>, portals
     }
 }
 
-fn render(textures: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32, sprites_and_textures: &Vec<(&Vec<Vec<f32>>, &Vec<Vec<u8>>, u32, u32, bool, bool)>, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, world_map: &Vec<Vec<u8>>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32, start_dist: f32, t: i32) -> Option<usize> {
+fn render(textures: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32, sprites_and_textures: &Vec<(&Vec<Vec<f32>>, &Vec<Vec<u8>>, u32, u32, bool, bool)>, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, world_map: &Vec<Vec<u8>>, world_layer: &Vec<Vec<u8>>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32, start_dist: f32, t: i32) -> Option<usize> {
     render_floor_ceiling(&textures, tex_width, tex_height, color_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y);
-    render_walls(&textures, tex_width, tex_height, &world_map, color_buff, depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, start_dist);
+    render_walls(&textures, tex_width, tex_height, &world_map, &world_layer, color_buff, depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, start_dist);
     render_sprites(&sprites_and_textures, color_buff, &depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, t)
 }
 
@@ -596,6 +651,33 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
         vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
         vec![2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
         vec![2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2]
+            ];
+    let mut world_layer =
+        vec![
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
             ];
 
         let mut sprites = vec![];
@@ -701,6 +783,9 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
                                     ServerMessage::MessageWorldMap(map) => {
                                         world_map = map;
                                     },
+                                    ServerMessage::MessageWorldLayer(layer) => {
+                                        world_layer = layer;
+                                    },
                                     ServerMessage::MessageGoldCoins(gcs) => {
                                         play_sound(&sound_device, String::from("sound/picked-coin-echo.mp3"));
                                         gold_coins = vec![];
@@ -788,7 +873,7 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
             let start_time = Instant::now();
 
 
-            render_portals(&sound_device, &portals, &portals_dests, &mut portal_color_buff, &mut portal_depth_buff, portal_width, portal_height, &mut portals_textures, &textures, &character_textures, &goldcoin_textures, &torch_textures, &sprites, &characters, &gold_coins, &torches, texture_width, texture_height, coin_width, coin_height, torch_width, torch_height, &mut color_buff, &mut depth_buff, &world_map, portal_width, portal_height, &mut pos_x, &mut pos_y, dir_x, dir_y, plane_x, plane_y, t);
+            render_portals(&sound_device, &portals, &portals_dests, &mut portal_color_buff, &mut portal_depth_buff, portal_width, portal_height, &mut portals_textures, &textures, &character_textures, &goldcoin_textures, &torch_textures, &sprites, &characters, &gold_coins, &torches, texture_width, texture_height, coin_width, coin_height, torch_width, torch_height, &mut color_buff, &mut depth_buff, &world_map, &world_layer, portal_width, portal_height, &mut pos_x, &mut pos_y, dir_x, dir_y, plane_x, plane_y, t);
             let sprites_and_textures = vec![
                 (&sprites, &textures, texture_width, texture_height, false, false),
                 (&characters, &character_textures, texture_width, texture_height, false, false),
@@ -796,7 +881,7 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
                 (&torches, &torch_textures, torch_width, torch_height, true, false),
                 (&portals, &portals_textures, portal_width as u32, portal_height as u32, true, true),
             ];
-            if let Some(portal_index) = render(&textures, texture_width, texture_height, &sprites_and_textures, &mut color_buff, &mut depth_buff, &world_map, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, 0.0, t) {
+            if let Some(portal_index) = render(&textures, texture_width, texture_height, &sprites_and_textures, &mut color_buff, &mut depth_buff, &world_map, &world_layer, window_width, window_height, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, 0.0, t) {
                 pos_x = portals_dests[portal_index][0];
                 pos_y = portals_dests[portal_index][1];
                 play_sound(&sound_device, String::from("sound/teleport.mp3"));
