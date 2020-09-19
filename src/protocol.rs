@@ -29,4 +29,5 @@ pub enum ServerMessage {
 pub enum ClientMessage {
     MessagePosition(Position),
     MessageHello(String),
+    MessageAction(f32, f32, u8),
 }
