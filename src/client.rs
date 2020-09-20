@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::io;
 use std::io::Write;
 use bytes::Bytes;
+use crossbeam_channel::Sender;
 
 fn flush_stdout() {
     let _ = io::stdout().flush().unwrap();
@@ -34,7 +35,7 @@ fn rmcup() {
 }
 
 
-fn render_floor_ceiling(textures: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32, color_buff: &mut Vec<u32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32) {
+fn render_floor_ceiling(textures: &Vec<Vec<u8>>, world_layer: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32, color_buff: &mut Vec<u32>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32) {
     for y in 0..h
     {
       // ray_dir for leftmost ray (x = 0) and rightmost ray (x = w)
@@ -84,10 +85,28 @@ fn render_floor_ceiling(textures: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32
         let tex_id = floor_texture as usize;
         let tex_i = tx + ty * tex_width;
         let tex_i = (tex_i * 3) as usize;
-        let color = textures[tex_id][tex_i] as u32 |
-                        ((textures[tex_id][tex_i + 1] as u32) << 8) |
-                        ((textures[tex_id][tex_i + 2] as u32) << 16);
-        let color = (color >> 1) & 8355711; // make a bit darker
+
+        let tex_id_layer = if (cell_x as usize) < world_layer.len() && (cell_y as usize) < world_layer[cell_x as usize].len() {
+            world_layer[cell_x as usize][cell_y as usize] as usize
+        }
+        else {
+            0
+        };
+
+        let mut color = if tex_id_layer != 0 {
+            let tex_id_layer = tex_id_layer - 1;
+            textures[tex_id_layer][tex_i] as u32 |
+                ((textures[tex_id_layer][tex_i + 1] as u32) << 8) |
+                ((textures[tex_id_layer][tex_i + 2] as u32) << 16)
+        } else {
+            0
+        };
+        if color == 0 {
+            color = textures[tex_id][tex_i] as u32 |
+                ((textures[tex_id][tex_i + 1] as u32) << 8) |
+                ((textures[tex_id][tex_i + 2] as u32) << 16);
+            color = (color >> 1) & 8355711
+        };
         color_buff[y as usize * w + x as usize] = color as u32;
 
         //ceiling (symmetrical, at screen_height - y - 1 instead of y)
@@ -383,11 +402,16 @@ fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32
   }
 }
 
-fn move_player(option_event: Option<crossterm_input::InputEvent>,world_map: &Vec<Vec<u8>>, pos_x: &mut f32, pos_y: &mut f32, dir_x: &mut f32, dir_y: &mut f32, plane_x: &mut f32, plane_y: &mut f32) -> f32 {
+fn move_player(option_event: Option<crossterm_input::InputEvent>,world_map: &Vec<Vec<u8>>, pos_x: &mut f32, pos_y: &mut f32, dir_x: &mut f32, dir_y: &mut f32, plane_x: &mut f32, plane_y: &mut f32, packet_sender: &Sender<Packet>, server: &std::net::SocketAddr) -> f32 {
     let rot_speed : f32 = 0.1;
     let move_speed : f32 = 0.1;
     let mut res = 0.0;
         match option_event {
+            Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Enter)) => {
+                let pos = ClientMessage::MessageAction(*pos_x, *pos_y, 1);
+                let pos_ser = bincode::serialize(&pos).unwrap();
+                packet_sender.send(Packet::reliable_unordered(*server, pos_ser)).unwrap();
+            },
             Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Up)) => {
                 if world_map[(*pos_x + *dir_x * move_speed) as usize][(*pos_y) as usize] == 0 { 
                     *pos_x += *dir_x * move_speed;
@@ -573,7 +597,7 @@ fn render_portals(sound_device: &rodio::Device, portals: &Vec<Vec<f32>>, portals
 }
 
 fn render(textures: &Vec<Vec<u8>>, tex_width: u32, tex_height: u32, sprites_and_textures: &Vec<(&Vec<Vec<f32>>, &Vec<Vec<u8>>, u32, u32, bool, bool)>, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, world_map: &Vec<Vec<u8>>, world_layer: &Vec<Vec<u8>>, w: usize, h: usize, pos_x: f32, pos_y: f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32, start_dist: f32, t: i32) -> Option<usize> {
-    render_floor_ceiling(&textures, tex_width, tex_height, color_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y);
+    render_floor_ceiling(&textures, &world_layer, tex_width, tex_height, color_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y);
     render_walls(&textures, tex_width, tex_height, &world_map, &world_layer, color_buff, depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, start_dist);
     render_sprites(&sprites_and_textures, color_buff, &depth_buff, w, h, pos_x, pos_y, dir_x, dir_y, plane_x, plane_y, t)
 }
@@ -908,7 +932,7 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
                 thread::sleep(waste_time);
             }
             let option_event = reader.next();
-            move_speed = move_player(option_event, &world_map, &mut pos_x, &mut pos_y, &mut dir_x, &mut dir_y, &mut plane_x, &mut plane_y)
+            move_speed = move_player(option_event, &world_map, &mut pos_x, &mut pos_y, &mut dir_x, &mut dir_y, &mut plane_x, &mut plane_y, &packet_sender, &server)
         }
 }
 

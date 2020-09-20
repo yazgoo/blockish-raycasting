@@ -67,7 +67,7 @@ fn random_position(world_map: &Vec<Vec<u8>>) -> (f32, f32) {
 }
 
 
-fn random_level() -> (String, Vec<Vec<u8>>, Vec<Vec<u8>>,Vec<Vec<f32>>,Vec<Vec<f32>>,Vec<Vec<f32>>) {
+fn random_level() -> levels::Level {
     /*
     let mut rng = rand::thread_rng();
     match rng.gen_range(0, 3) {
@@ -82,11 +82,10 @@ fn random_level() -> (String, Vec<Vec<u8>>, Vec<Vec<u8>>,Vec<Vec<f32>>,Vec<Vec<f
 
 pub fn server(address: String, silent: bool) {
     let mut coins_found = 0;
-    let (mut textures_url, mut world_map, mut world_layer,
-        mut sprites, mut portals, mut portals_dests) = random_level();
+    let mut level = random_level();
 
     let mut gold_coins = vec![
-        random_position(&world_map)
+        random_position(&level.world_map)
     ];
     // Creates the socket
     let mut socket = Socket::bind(address).unwrap();
@@ -136,34 +135,43 @@ pub fn server(address: String, silent: bool) {
                                         positions_clone.insert(key.clone(), value.clone());
                                     }
                                 }
-                                coins_found = check_gold_coins(coins_found, &world_map, &packet_sender, &mut gold_coins, &positions, &nicknames, &mut points);
+                                coins_found = check_gold_coins(coins_found, &level.world_map, &packet_sender, &mut gold_coins, &positions, &nicknames, &mut points);
                                 let positions_message = ServerMessage::MessagePositions(positions_clone);
                                 let pos_ser = bincode::serialize(&positions_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, pos_ser)).unwrap();
                             },
+                            ClientMessage::MessageAction(pos_x, pos_y, action) => {
+                                (level.on_action)(pos_x, pos_y, action, &mut level.world_map, &mut level.world_layer);
+                                let map_message = ServerMessage::MessageWorldLayer(level.world_layer.clone());
+                                let message_ser = bincode::serialize(&map_message).unwrap();
+                                packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
+                                let map_message = ServerMessage::MessageWorldMap(level.world_map.clone());
+                                let message_ser = bincode::serialize(&map_message).unwrap();
+                                packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
+                            }
                             ClientMessage::MessageHello(nickname) => {
                                 nicknames.insert(endpoint, nickname);
                                 points.insert(endpoint, 0);
-                                let (x, y) = random_position(&world_map);
+                                let (x, y) = random_position(&level.world_map);
                                 let map_message = ServerMessage::MessageTeleport(Position { x: x, y: y, dir_x: -1.0, dir_y: 0.0, speed: 0.0 });
                                 let message_ser = bincode::serialize(&map_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
-                                let map_message = ServerMessage::MessageWorldMap(world_map.clone());
+                                let map_message = ServerMessage::MessageWorldMap(level.world_map.clone());
                                 let message_ser = bincode::serialize(&map_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
-                                let map_message = ServerMessage::MessageWorldLayer(world_layer.clone());
+                                let map_message = ServerMessage::MessageWorldLayer(level.world_layer.clone());
                                 let message_ser = bincode::serialize(&map_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
-                                let sprites_message = ServerMessage::MessageSprites(sprites.clone());
+                                let sprites_message = ServerMessage::MessageSprites(level.sprites.clone());
                                 let message_ser = bincode::serialize(&sprites_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
-                                let textures_message = ServerMessage::MessageTexturesZip(textures_url.clone());
+                                let textures_message = ServerMessage::MessageTexturesZip(level.url.clone());
                                 let message_ser = bincode::serialize(&textures_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
                                 let textures_message = ServerMessage::MessageGoldCoins(gold_coins.clone());
                                 let message_ser = bincode::serialize(&textures_message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
-                                let message = ServerMessage::MessagePortals(portals.clone(), portals_dests.clone());
+                                let message = ServerMessage::MessagePortals(level.portals.clone(), level.portals_destinations.clone());
                                 let message_ser = bincode::serialize(&message).unwrap();
                                 packet_sender.send(Packet::reliable_unordered(endpoint, message_ser)).unwrap();
                                 let textures_message = ServerMessage::MessageText(String::from("Hello !"), Duration::from_secs(10));
