@@ -18,6 +18,8 @@ use std::io;
 use std::io::Write;
 use bytes::Bytes;
 use crossbeam_channel::Sender;
+use gilrs::{Gilrs, Button, Event};
+
 
 fn flush_stdout() {
     let _ = io::stdout().flush().unwrap();
@@ -402,17 +404,86 @@ fn render_walls(textures: &Vec<Vec<u8>>, texture_width: u32, texture_height: u32
   }
 }
 
-fn move_player(option_event: Option<crossterm_input::InputEvent>,world_map: &Vec<Vec<u8>>, pos_x: &mut f32, pos_y: &mut f32, dir_x: &mut f32, dir_y: &mut f32, plane_x: &mut f32, plane_y: &mut f32, packet_sender: &Sender<Packet>, server: &std::net::SocketAddr) -> f32 {
+enum InputEvent {
+    Action,
+    WalkForward,
+    WalkBackward,
+    StrafeLeft,
+    StrafeRight,
+    RotateRight,
+    RotateLeft,
+    Exit,
+}
+
+fn crossterm_to_client_event(option_event: Option<crossterm_input::InputEvent>) -> Option<InputEvent> {
+    match option_event {
+        Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Enter)) => 
+            Some(InputEvent::Action),
+        Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Up)) => 
+            Some(InputEvent::WalkForward),
+        Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Down)) => 
+            Some(InputEvent::WalkBackward),
+        Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Esc)) => 
+            Some(InputEvent::Exit),
+        Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Right)) => 
+            Some(InputEvent::RotateRight),
+        Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Left)) => 
+            Some(InputEvent::RotateLeft),
+        Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::CtrlRight)) => 
+            Some(InputEvent::StrafeRight),
+        Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::CtrlLeft)) => 
+            Some(InputEvent::StrafeLeft),
+        _ => None
+    }
+}
+
+fn girls_to_client_event(gamepad_option: Option<gilrs::Gamepad>) -> Option<InputEvent> {
+    if let Some(gamepad) = gamepad_option {
+        if gamepad.is_pressed(gilrs::Button::DPadUp) {
+            Some(InputEvent::WalkForward)
+        }
+        else if gamepad.is_pressed(gilrs::Button::DPadDown) {
+            Some(InputEvent::WalkBackward)
+        }
+        else if gamepad.is_pressed(gilrs::Button::DPadLeft)  || gamepad.is_pressed(gilrs::Button::LeftTrigger) {
+            Some(InputEvent::RotateLeft)
+        }
+        else if gamepad.is_pressed(gilrs::Button::DPadRight) || gamepad.is_pressed(gilrs::Button::RightTrigger) {
+            Some(InputEvent::RotateRight)
+        }
+        else if gamepad.is_pressed(gilrs::Button::LeftTrigger2) {
+            Some(InputEvent::StrafeLeft)
+        }
+        else if gamepad.is_pressed(gilrs::Button::RightTrigger2) {
+            Some(InputEvent::StrafeRight)
+        }
+        else if gamepad.is_pressed(gilrs::Button::South) {
+            Some(InputEvent::Action)
+        }
+        else if gamepad.is_pressed(gilrs::Button::Start) {
+            Some(InputEvent::Exit)
+        }
+        else {
+            None
+        }
+    }
+    else {
+        None
+    }
+}
+
+
+fn move_player(option_event: Option<InputEvent>,world_map: &Vec<Vec<u8>>, pos_x: &mut f32, pos_y: &mut f32, dir_x: &mut f32, dir_y: &mut f32, plane_x: &mut f32, plane_y: &mut f32, packet_sender: &Sender<Packet>, server: &std::net::SocketAddr) -> f32 {
     let rot_speed : f32 = 0.1;
     let move_speed : f32 = 0.1;
     let mut res = 0.0;
         match option_event {
-            Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Enter)) => {
+            Some(InputEvent::Action) => {
                 let pos = ClientMessage::MessageAction(*pos_x, *pos_y, 1);
                 let pos_ser = bincode::serialize(&pos).unwrap();
                 packet_sender.send(Packet::reliable_unordered(*server, pos_ser)).unwrap();
             },
-            Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Up)) => {
+            Some(InputEvent::WalkForward) => {
                 if world_map[(*pos_x + *dir_x * move_speed) as usize][(*pos_y) as usize] == 0 { 
                     *pos_x += *dir_x * move_speed;
                 }
@@ -421,7 +492,7 @@ fn move_player(option_event: Option<crossterm_input::InputEvent>,world_map: &Vec
                 }
                 res = move_speed;
             },
-            Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Down)) => {
+            Some(InputEvent::WalkBackward) => {
                 if world_map[(*pos_x - *dir_x * move_speed) as usize][(*pos_y) as usize] == 0 { 
                     *pos_x -= *dir_x * move_speed;
                 }
@@ -430,12 +501,12 @@ fn move_player(option_event: Option<crossterm_input::InputEvent>,world_map: &Vec
                 }
                 res = -move_speed;
             },
-            Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Esc)) => {
+            Some(InputEvent::Exit) => {
                 rmcup();
                 let _screen = crossterm_input::RawScreen::disable_raw_mode();
                 std::process::exit(1);
             },
-            Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Right)) => {
+            Some(InputEvent::RotateRight) => {
                 let old_dir_x = *dir_x;
                 *dir_x = *dir_x * (-rot_speed).cos() - *dir_y * (-rot_speed).sin();
                 *dir_y = old_dir_x * (-rot_speed).sin() + *dir_y * (-rot_speed).cos();
@@ -443,7 +514,7 @@ fn move_player(option_event: Option<crossterm_input::InputEvent>,world_map: &Vec
                 *plane_x = *plane_x * (-rot_speed).cos() - *plane_y * (-rot_speed).sin();
                 *plane_y = old_plane_x * (-rot_speed).sin() + *plane_y * (-rot_speed).cos();
             },
-            Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Left)) => {
+            Some(InputEvent::RotateLeft) => {
                 let old_dir_x = *dir_x;
                 *dir_x = *dir_x * (rot_speed).cos()  - *dir_y * (rot_speed).sin();
                 *dir_y = old_dir_x * (rot_speed).sin() + *dir_y * (rot_speed).cos();
@@ -451,7 +522,7 @@ fn move_player(option_event: Option<crossterm_input::InputEvent>,world_map: &Vec
                 *plane_x = *plane_x * (rot_speed).cos()  - *plane_y * (rot_speed).sin();
                 *plane_y = old_plane_x * (rot_speed).sin() + *plane_y * (rot_speed).cos();
             },
-            Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::CtrlRight)) => {
+            Some(InputEvent::StrafeRight) => {
                 let _dir_x = *dir_x * (3.14/2.0 as f32).cos()  - *dir_y * (3.14/2.0 as f32).sin();
                 let _dir_y = *dir_x * (3.14/2.0 as f32).sin() + *dir_y * (3.14/2.0 as f32).cos();
                 if world_map[(*pos_x - _dir_x * move_speed) as usize][(*pos_y) as usize] == 0 { 
@@ -462,7 +533,7 @@ fn move_player(option_event: Option<crossterm_input::InputEvent>,world_map: &Vec
                 }
                 res = -move_speed;
             },
-            Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::CtrlLeft)) => {
+            Some(InputEvent::StrafeLeft) => {
                 let _dir_x = *dir_x * (3.14/2.0 as f32).cos()  - *dir_y * (3.14/2.0 as f32).sin();
                 let _dir_y = *dir_x * (3.14/2.0 as f32).sin() + *dir_y * (3.14/2.0 as f32).cos();
                 if world_map[(*pos_x - _dir_x * move_speed) as usize][(*pos_y) as usize] == 0 { 
@@ -773,6 +844,10 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
 
         let mut previous = Instant::now();
 
+        let mut gilrs = Gilrs::new().unwrap();
+        let mut active_gamepad = None;
+        let mut gamepad_id = None;
+
         let mut t = 0;
 
         loop {
@@ -931,8 +1006,18 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
                 let waste_time = Duration::from_millis(time_per_frame) - render_time;
                 thread::sleep(waste_time);
             }
-            let option_event = reader.next();
-            move_speed = move_player(option_event, &world_map, &mut pos_x, &mut pos_y, &mut dir_x, &mut dir_y, &mut plane_x, &mut plane_y, &packet_sender, &server)
+            if let Some(Event { id, event, time }) = gilrs.next_event() {
+                gamepad_id = Some(id);
+            }
+            active_gamepad = gamepad_id.map(|id| gilrs.gamepad(id));
+            if let Some(event) = girls_to_client_event(active_gamepad) {
+                move_speed = move_player(Some(event), &world_map, &mut pos_x, &mut pos_y, &mut dir_x, &mut dir_y, &mut plane_x, &mut plane_y, &packet_sender, &server)
+            }
+            else {
+                let option_event = crossterm_to_client_event(reader.next());
+                move_speed = move_player(option_event, &world_map, &mut pos_x, &mut pos_y, &mut dir_x, &mut dir_y, &mut plane_x, &mut plane_y, &packet_sender, &server)
+            }
+
         }
 }
 
