@@ -164,7 +164,7 @@ fn render_sprites(all_sprites_and_textures: &Vec<(&Vec<Vec<f32>>, &Vec<Vec<u8>>,
             let transform_x = inv_det * (dir_y * sprite_x - dir_x * sprite_y);
             let transform_y = inv_det * (-plane_y * sprite_x + plane_x * sprite_y); //this is actually the depth inside the screen, that what Z is in 3_d
 
-            let sprite_screen_x = ((w as f32 / 2.0) * (1.0 + transform_x / transform_y)) as usize;
+            let sprite_screen_x = ((w as f32 / 2.0) * (1.0 + transform_x / transform_y)) as i32;
 
             //calculate height of the sprite on screen
             let sprite_height = ((h as f32 / (transform_y)) as i32).abs(); //using 'transform_y' instead of the real distance prevents fisheye
@@ -423,7 +423,7 @@ fn crossterm_to_client_event(option_event: Option<crossterm_input::InputEvent>) 
             Some(InputEvent::WalkForward),
         Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Down)) => 
             Some(InputEvent::WalkBackward),
-        Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Esc)) => 
+        Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Char('q'))) => 
             Some(InputEvent::Exit),
         Some(crossterm_input::InputEvent::Keyboard(crossterm_input::KeyEvent::Right)) => 
             Some(InputEvent::RotateRight),
