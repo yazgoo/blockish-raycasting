@@ -10,15 +10,14 @@ use pathfinder_geometry::vector::{Vector2F, Vector2I};
 use laminar::{Socket, SocketEvent, Packet};
 use std::time::{Duration, Instant};
 use std::thread;
-use std::fs::{File, metadata};
+use std::fs::File;
 use std::io::BufReader;
 use rodio::Source;
 use std::collections::HashMap;
 use std::io;
 use std::io::Write;
-use bytes::Bytes;
 use crossbeam_channel::Sender;
-use gilrs::{Gilrs, Button, Event};
+use gilrs::{Gilrs, Event};
 
 
 fn flush_stdout() {
@@ -576,7 +575,7 @@ fn load_texture_from_http_wip(url: String) -> Vec<Vec<u8>> {
 
 fn load_texture_from_local_file(url: String) -> Vec<Vec<u8>> {
     let texture_size = 64;
-    let mut file = File::open(&url).unwrap();
+    let file = File::open(&url).unwrap();
     let mut archive = zip::ZipArchive::new(file).unwrap();
     let mut textures = HashMap::new();
     for i in 0..archive.len() {
@@ -637,7 +636,7 @@ fn play_sound(sound_device: &rodio::Device, path: String) {
     rodio::play_raw(&sound_device, coin_sound_samples);
 }
 
-fn render_portals(sound_device: &rodio::Device, portals: &Vec<Vec<f32>>, portals_dests: &Vec<Vec<f32>>, portal_color_buff: &mut Vec<u32>, portal_depth_buff: &mut Vec<f32>, portal_width: usize, portal_height: usize, portals_textures: &mut Vec<Vec<u8>>, textures: &Vec<Vec<u8>>, character_textures: &Vec<Vec<u8>>, goldcoin_textures: &Vec<Vec<u8>>,torch_textures: &Vec<Vec<u8>>, sprites: &Vec<Vec<f32>>, characters: &Vec<Vec<f32>>, gold_coins: &Vec<Vec<f32>>, torches: &Vec<Vec<f32>>, tex_width: u32, tex_height: u32, coin_width: u32, coin_height: u32, torch_width: u32, torch_height: u32, color_buff: &mut Vec<u32>, depth_buff: &mut Vec<f32>, world_map: &Vec<Vec<u8>>, world_layer: &Vec<Vec<u8>>, window_width: usize, window_height: usize, pos_x: &mut f32, pos_y: &mut f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32, t: i32) {
+fn render_portals(portals: &Vec<Vec<f32>>, portals_dests: &Vec<Vec<f32>>, portal_color_buff: &mut Vec<u32>, portal_depth_buff: &mut Vec<f32>, portal_width: usize, portal_height: usize, portals_textures: &mut Vec<Vec<u8>>, textures: &Vec<Vec<u8>>, character_textures: &Vec<Vec<u8>>, goldcoin_textures: &Vec<Vec<u8>>,torch_textures: &Vec<Vec<u8>>, sprites: &Vec<Vec<f32>>, characters: &Vec<Vec<f32>>, gold_coins: &Vec<Vec<f32>>, torches: &Vec<Vec<f32>>, tex_width: u32, tex_height: u32, coin_width: u32, coin_height: u32, torch_width: u32, torch_height: u32, world_map: &Vec<Vec<u8>>, world_layer: &Vec<Vec<u8>>, pos_x: &mut f32, pos_y: &mut f32, dir_x:f32, dir_y: f32, plane_x: f32, plane_y: f32, t: i32) {
     for i in 0..portals.len() {
         let dist_x = *pos_x - portals[i][0];
         let dist_y = *pos_y - portals[i][1];
@@ -683,7 +682,7 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
     let mut color_buff : Vec<u32> = vec![0; window_width * window_height];
     let mut depth_buff : Vec<f32> = vec![0.0; window_width];
     let mut portal_color_buff : Vec<u32> = vec![0; portal_width * portal_height];
-    let mut portal_color_buff_u8 : Vec<u8> = vec![0; portal_width * portal_height * 4];
+    let portal_color_buff_u8 : Vec<u8> = vec![0; portal_width * portal_height * 4];
     let mut portal_depth_buff : Vec<f32> = vec![0.0; portal_width];
 
 
@@ -845,7 +844,7 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
         let mut previous = Instant::now();
 
         let mut gilrs = Gilrs::new().unwrap();
-        let mut active_gamepad = None;
+        let mut active_gamepad;
         let mut gamepad_id = None;
 
         let mut t = 0;
@@ -896,7 +895,7 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
                                         portals = pt;
                                         portals_dests = ptdst;
                                         portals_textures = vec![];
-                                        for i in 0..portals.len() {
+                                        for _ in 0..portals.len() {
                                             portals_textures.push(portal_color_buff_u8.clone());
                                         }
                                     }
@@ -972,7 +971,7 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
             let start_time = Instant::now();
 
 
-            render_portals(&sound_device, &portals, &portals_dests, &mut portal_color_buff, &mut portal_depth_buff, portal_width, portal_height, &mut portals_textures, &textures, &character_textures, &goldcoin_textures, &torch_textures, &sprites, &characters, &gold_coins, &torches, texture_width, texture_height, coin_width, coin_height, torch_width, torch_height, &mut color_buff, &mut depth_buff, &world_map, &world_layer, portal_width, portal_height, &mut pos_x, &mut pos_y, dir_x, dir_y, plane_x, plane_y, t);
+            render_portals(&portals, &portals_dests, &mut portal_color_buff, &mut portal_depth_buff, portal_width, portal_height, &mut portals_textures, &textures, &character_textures, &goldcoin_textures, &torch_textures, &sprites, &characters, &gold_coins, &torches, texture_width, texture_height, coin_width, coin_height, torch_width, torch_height, &world_map, &world_layer, &mut pos_x, &mut pos_y, dir_x, dir_y, plane_x, plane_y, t);
             let sprites_and_textures = vec![
                 (&sprites, &textures, texture_width, texture_height, false, false),
                 (&characters, &character_textures, texture_width, texture_height, false, false),
@@ -1006,7 +1005,7 @@ pub fn client(server_address: String, client_address: String, nickname: String) 
                 let waste_time = Duration::from_millis(time_per_frame) - render_time;
                 thread::sleep(waste_time);
             }
-            if let Some(Event { id, event, time }) = gilrs.next_event() {
+            if let Some(Event { id, event: _, time: _}) = gilrs.next_event() {
                 gamepad_id = Some(id);
             }
             active_gamepad = gamepad_id.map(|id| gilrs.gamepad(id));

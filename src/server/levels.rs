@@ -8,7 +8,7 @@ pub struct Level {
     pub on_action: Box<dyn Fn(f32, f32, u8, &mut Vec<Vec<u8>>, &mut Vec<Vec<u8>>) -> ()>,
 }
 
-pub fn first() -> Level {
+pub fn _first() -> Level {
     Level {
         url: String::from("https://srv-file10.gofile.io/download/GrF7ZN/wolfenstein_textures.zip"),
         world_map: vec![
@@ -98,10 +98,10 @@ pub fn first() -> Level {
                             vec![10.0, 10.0],
                             vec![20.5, 10.1],
                         ],
-                        on_action: Box::new(|x, y, action, world_map, level| {  }),
+                        on_action: Box::new(|_x, _y, _action, _world_map, _level| {  }),
     }
 }
-pub fn rat_race() -> Level {
+pub fn _rat_race() -> Level {
     Level { url: String::from("https://srv-file10.gofile.io/download/GrF7ZN/wolfenstein_textures.zip"),
     world_map: vec![
         vec![4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,],
@@ -177,10 +177,10 @@ pub fn rat_race() -> Level {
                 ],
                 portals: vec![],
                 portals_destinations: vec![],
-                on_action: Box::new(|x, y, action, world_map, level| {  }),
+                on_action: Box::new(|_x, _y, _action, _world_map, _level| {  }),
     }
 }
-pub fn spyral() -> Level {
+pub fn _spyral() -> Level {
     Level { url: String::from("https://srv-file10.gofile.io/download/GrF7ZN/wolfenstein_textures.zip"),
     world_map: vec![
         vec![2,2,1,2,2,2,2,2,1,2,2,2,2,2,2,1,2,2,2,2,2,2,2,2,],
@@ -270,10 +270,10 @@ pub fn spyral() -> Level {
                         vec![11.5, 11.5],
                         vec![1.5, 10.1],
                     ],
-                    on_action: Box::new(|x, y, action, world_map, level| {  }),
+                    on_action: Box::new(|_x, _y, _action, _world_map, _level| {  }),
     }
 }
-pub fn trapped() -> Level {
+pub fn _trapped() -> Level {
     Level { url: String::from("https://srv-file10.gofile.io/download/GrF7ZN/wolfenstein_textures.zip"),
     world_map: vec![
         vec![7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,],
@@ -358,7 +358,7 @@ pub fn trapped() -> Level {
                         vec![20.5, 20.1],
                         vec![1.5, 1.5],
                     ],
-                    on_action: Box::new(|x, y, action, world_map, level| {  }),
+                    on_action: Box::new(|_x, _y, _action, _world_map, _level| {  }),
     }
 }
 pub fn metro() -> Level {
@@ -434,7 +434,7 @@ pub fn metro() -> Level {
                     vec![20.5, 20.1],
                     vec![1.5, 1.5],
                 ],
-                on_action: Box::new(|x, y, action, world_map, world_layer| { 
+                on_action: Box::new(|x, y, _action, world_map, world_layer| { 
                     if x as usize == 21 && y as usize == 3 {
                         if world_layer[22][3] == 20 {
                             world_layer[22][3] = 21;

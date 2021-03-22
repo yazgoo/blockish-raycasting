@@ -20,8 +20,7 @@ fn check_gold_coins(coins_found: u32, world_map: &Vec<Vec<u8>>, packet_sender: &
                 gold_coins[i].0 = new_x;
                 gold_coins[i].1 = new_y;
                 who = Some(key);
-                let who_points = points.get(key).unwrap();
-                points.insert(*key, who_points + 1);
+                points.entry(*key).and_modify(|e| { *e += 1 });
             }
         }
     }
